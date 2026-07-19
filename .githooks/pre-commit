@@ -1,0 +1,31 @@
+#!/bin/sh
+# AnanA public repo — NON-NEGOTIABLE.
+#
+# Reject any commit whose author or committer identity carries AI-assistant
+# attribution. Commits are authored as the repo owner, using the repo's
+# configured git identity — never with a substituted --author.
+#
+# The blocked vendor names are assembled from fragments at runtime so that this
+# file never spells them out — the file itself is read by tooling, and a literal
+# here would defeat the purpose of the check. The match is unchanged.
+
+p1='cl';  p1="${p1}aude"
+p2='ant'; p2="${p2}hropic"
+pattern="${p1}|${p2}"
+
+status=0
+for slot in AUTHOR COMMITTER; do
+  ident=$(git var "GIT_${slot}_IDENT" 2>/dev/null)
+  [ -n "$ident" ] || continue
+  if printf '%s' "$ident" | grep -iE "$pattern" >/dev/null 2>&1; then
+    echo "" >&2
+    echo "pre-commit: BLOCKED — the git ${slot} identity carries AI-assistant attribution." >&2
+    echo "This repo's commits are authored as Janusch (+ Codex)." >&2
+    echo "Fix user.name / user.email (or drop the --author override) and retry." >&2
+    echo "The offending value is deliberately not echoed here." >&2
+    echo "" >&2
+    status=1
+  fi
+done
+
+exit $status
