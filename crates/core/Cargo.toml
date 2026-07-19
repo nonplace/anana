@@ -1,0 +1,23 @@
+[package]
+name = "anana-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+ecs = ["dep:bevy_ecs"]
+
+[dependencies]
+bevy_ecs = { workspace = true, optional = true }
+blake3.workspace = true
+postcard.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
