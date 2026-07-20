@@ -9,8 +9,10 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
     EventPayload, GenePair, Genome, GoshKind, HandAllele, HumanId, Instincts, LifeStage, Lineage,
-    Permille, Phenotype, PolySublocus, PolygenicLocus, Rng, SexAllele, SkillId, SkillState, Skills,
-    Tick, Virus, VirusId, apply_learning, conceive, express, p_infect,
+    ObservationFactors, Permille, Phenotype, PolySublocus, PolygenicLocus, PracticeKind, Residence,
+    ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId, apply_learning,
+    conceive, decay_unpractised, express, observational_gain, optimal_teaching_gap, p_infect,
+    practise_skill, teaching_gain,
 };
 use anana_sim::{
     App, Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationStats, WorldClock,
@@ -49,6 +51,8 @@ pub struct AnanaWorld {
     open_births: u64,
     crowded_births: u64,
     dead_subject: Option<HumanId>,
+    social_values: Vec<u32>,
+    social_gaps: Vec<u16>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -104,6 +108,153 @@ fn learning_phenotype() -> Phenotype {
         learning_rate: Permille::ONE,
         lifespan_ticks: 22_000,
     }
+}
+
+fn remembering_skills() -> Skills {
+    let mut skills = Skills::default();
+    skills.levels.insert(
+        SkillId::Recall,
+        SkillState {
+            xp: 100,
+            learned: true,
+        },
+    );
+    skills
+}
+
+fn complete_observation() -> ObservationFactors {
+    ObservationFactors {
+        attention: Permille::ONE,
+        retention: Permille::ONE,
+        reproduction: Permille::ONE,
+        motivation: Permille::ONE,
+    }
+}
+
+#[given("an attentive remembering adult watches a more capable neighbour")]
+fn an_attentive_adult_watches_a_capable_neighbour(w: &mut AnanaWorld) {
+    w.social_values = vec![observational_gain(100, 80, 20, complete_observation()), 100];
+}
+
+#[when("their observational learning is compared with doing the same task")]
+fn observational_learning_is_compared_with_direct_experience(_w: &mut AnanaWorld) {}
+
+#[then("watching produces some learning but less than direct experience")]
+fn watching_helps_less_than_doing(w: &mut AnanaWorld) {
+    assert!(w.social_values[0] > 0);
+    assert!(w.social_values[0] < w.social_values[1]);
+}
+
+#[given("four otherwise ready observers each missing one stage of observation")]
+fn four_observers_each_lack_one_stage(w: &mut AnanaWorld) {
+    w.social_values.clear();
+    for missing in 0..4 {
+        let mut factors = complete_observation();
+        match missing {
+            0 => factors.attention = Permille::ZERO,
+            1 => factors.retention = Permille::ZERO,
+            2 => factors.reproduction = Permille::ZERO,
+            _ => factors.motivation = Permille::ZERO,
+        }
+        w.social_values
+            .push(observational_gain(100, 80, 20, factors));
+    }
+}
+
+#[when("each watches the same capable neighbour")]
+fn each_observer_watches_the_same_neighbour(_w: &mut AnanaWorld) {}
+
+#[then("none of the four observers learns from watching")]
+fn no_incomplete_observer_learns(w: &mut AnanaWorld) {
+    assert!(w.social_values.iter().all(|gain| *gain == 0));
+}
+
+#[given("a beginner can choose a peer, a nearby teacher, or a distant expert")]
+fn a_beginner_can_choose_three_teachers(w: &mut AnanaWorld) {
+    let beginner = 0;
+    let nearby = optimal_teaching_gap(beginner);
+    w.social_values = vec![
+        teaching_gain(beginner, beginner, 1_000),
+        teaching_gain(beginner, nearby, 1_000),
+        teaching_gain(beginner, 100, 1_000),
+    ];
+}
+
+#[when("the beginner receives the same length lesson from each")]
+fn the_beginner_receives_equal_lessons(_w: &mut AnanaWorld) {}
+
+#[then("the nearby teacher transfers the most")]
+fn the_nearby_teacher_transfers_most(w: &mut AnanaWorld) {
+    assert!(w.social_values[1] > w.social_values[0]);
+    assert!(w.social_values[1] > w.social_values[2]);
+}
+
+#[given("a beginner and an already capable learner can choose among teachers")]
+fn learners_at_two_levels_can_choose_teachers(w: &mut AnanaWorld) {
+    w.social_gaps = vec![optimal_teaching_gap(10), optimal_teaching_gap(80)];
+}
+
+#[when("each chooses the lesson that transfers the most")]
+fn each_learner_chooses_the_best_lesson(_w: &mut AnanaWorld) {}
+
+#[then("the capable learner chooses a teacher further ahead")]
+fn the_capable_learner_chooses_a_wider_gap(w: &mut AnanaWorld) {
+    assert!(w.social_gaps[1] > w.social_gaps[0]);
+}
+
+#[given("equal experience is massed for one learner and retrieved over time by another")]
+fn equal_experience_is_massed_and_spaced(w: &mut AnanaWorld) {
+    let mind = Consciousness {
+        awareness: 100,
+        focus: 100,
+        memory_capacity: 1_000,
+    };
+    let phenotype = learning_phenotype();
+    let mut massed = remembering_skills();
+    let mut spaced = remembering_skills();
+    for tick in [1, 2, 3] {
+        practise_skill(
+            &mut massed,
+            &mind,
+            &phenotype,
+            SkillId::Motor,
+            100,
+            Tick(tick),
+            PracticeKind::Restudy,
+        )
+        .expect("massed practice is available");
+    }
+    for tick in [1, 21, 41] {
+        practise_skill(
+            &mut spaced,
+            &mind,
+            &phenotype,
+            SkillId::Motor,
+            100,
+            Tick(tick),
+            PracticeKind::Retrieval,
+        )
+        .expect("spaced retrieval is available");
+    }
+    w.social_values = vec![
+        massed.levels[&SkillId::Motor].xp,
+        spaced.levels[&SkillId::Motor].xp,
+    ];
+    decay_unpractised(&mut massed, Tick(241));
+    decay_unpractised(&mut spaced, Tick(241));
+    w.social_values.extend([
+        massed.levels[&SkillId::Motor].xp,
+        spaced.levels[&SkillId::Motor].xp,
+    ]);
+}
+
+#[when("both are tested immediately and again after a long delay")]
+fn both_are_tested_now_and_later(_w: &mut AnanaWorld) {}
+
+#[then("massed restudy looks better immediately but spaced retrieval lasts longer")]
+fn the_retrieval_advantage_reverses_with_delay(w: &mut AnanaWorld) {
+    assert!(w.social_values[0] > w.social_values[1]);
+    assert!(w.social_values[3] > w.social_values[2]);
 }
 
 fn virus(spreadscore: u8) -> Virus {
@@ -212,6 +363,7 @@ fn spawn_scenario_human(app: &mut App, id: HumanId, female: bool, age_permille: 
         body,
         skills,
         Lineage::new(id, None, None, 0, Tick(0)),
+        Residence { id: ResidenceId(1) },
     ));
 }
 
@@ -578,6 +730,7 @@ fn a_newborn_with_expressed_traits(w: &mut AnanaWorld) {
         Body::at_birth(&phenotype),
         Skills::default(),
         Lineage::new(id, None, None, 0, Tick(0)),
+        Residence { id: ResidenceId(1) },
     ));
     app.world_mut().resource_mut::<NextHumanId>().0 = HumanId(2);
     app.world_mut().resource_mut::<SimulationStats>().living = 1;

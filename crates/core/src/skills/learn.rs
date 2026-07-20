@@ -57,8 +57,21 @@ pub fn apply_learning(
     id: SkillId,
     base_xp: u32,
 ) -> Result<(), CoreError> {
-    let recall_was_learned = skills.recall_learned();
     let gain = learning_gain(skills, consciousness, phenotype, id, base_xp)?;
+    apply_calculated_learning(skills, consciousness, id, gain)
+}
+
+/// Applies a gain already scaled by the learning model while preserving the awareness and Recall gates.
+pub fn apply_calculated_learning(
+    skills: &mut Skills,
+    consciousness: &Consciousness,
+    id: SkillId,
+    gain: u32,
+) -> Result<(), CoreError> {
+    if consciousness.awareness < min_awareness(id) {
+        return Err(CoreError::SkillLocked(id));
+    }
+    let recall_was_learned = skills.recall_learned();
     let state = skills.levels.entry(id).or_default();
     if id != SkillId::Recall && !recall_was_learned {
         state.xp = state.xp.saturating_mul(9) / 10;
@@ -197,5 +210,20 @@ mod tests {
             ),
             Ok(480)
         );
+    }
+
+    #[test]
+    fn a_precalculated_event_gain_still_obeys_awareness_and_recall() {
+        let mut skills = Skills::default();
+        let before = skills.clone();
+        assert_eq!(
+            apply_calculated_learning(&mut skills, &consciousness(9, 100), SkillId::Motor, 100),
+            Err(CoreError::SkillLocked(SkillId::Motor))
+        );
+        assert_eq!(skills, before);
+        apply_calculated_learning(&mut skills, &consciousness(100, 100), SkillId::Motor, 100)
+            .expect("motor is available");
+        assert_eq!(skills.levels[&SkillId::Motor].xp, 100);
+        assert!(!skills.levels[&SkillId::Motor].learned);
     }
 }

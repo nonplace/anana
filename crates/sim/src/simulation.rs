@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, Consciousness, DiseaseAllele, EyeAllele, GenePair, Genome, God, GodId, HandAllele,
     HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, PolySublocus,
-    PolygenicLocus, Rng, SexAllele, SkillId, SkillState, Skills, Tick, express,
+    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills, Tick,
+    express,
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -17,8 +18,8 @@ use crate::systems::{
 };
 use crate::{
     Config, DeadRegistry, EventDigest, EventIntake, EventLog, Gods, HashHistory, NextHumanId,
-    PendingBirths, PopulationHistory, SimulationFaults, SimulationRng, SimulationStats, Viruses,
-    WorldClock,
+    NextResidenceId, PendingBirths, PopulationHistory, SimulationFaults, SimulationRng,
+    SimulationStats, Viruses, WorldClock,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
@@ -55,6 +56,7 @@ impl Plugin for SimPlugin {
             .insert_resource(WorldClock(Tick(0)))
             .insert_resource(SimulationRng(Rng::new(self.seed)))
             .insert_resource(NextHumanId(HumanId(1)))
+            .insert_resource(NextResidenceId(ResidenceId(1)))
             .insert_resource(EventLog::default())
             .insert_resource(EventDigest::default())
             .insert_resource(EventIntake::default())
@@ -212,6 +214,7 @@ fn seed_founders(app: &mut App) {
     let seed = app.world().resource::<SimulationRng>().0;
     let initial_virus = app.world().resource::<Config>().initial_virus.clone();
     for index in 0..count {
+        let residence_id = ResidenceId(u64::from(index / 25).saturating_add(1));
         let id = match app.world_mut().resource_mut::<NextHumanId>().allocate() {
             Ok(id) => id,
             Err(error) => {
@@ -251,6 +254,7 @@ fn seed_founders(app: &mut App) {
             body,
             skills,
             lineage,
+            Residence { id: residence_id },
         ));
         if index == 0 {
             entity.insert(Infection {
@@ -264,6 +268,8 @@ fn seed_founders(app: &mut App) {
     let stats = &mut *app.world_mut().resource_mut::<SimulationStats>();
     stats.living = u64::from(count);
     stats.surviving_founder_lineages = count;
+    app.world_mut().resource_mut::<NextResidenceId>().0 =
+        ResidenceId(u64::from(count.saturating_add(24) / 25).saturating_add(1));
 }
 
 pub fn build_headless_app(seed: u64, config: Config) -> App {

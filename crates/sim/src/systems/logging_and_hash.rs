@@ -2,13 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
     Body, Consciousness, Genome, HumanId, HumanState, Infection, Instincts, Lineage, Phenotype,
-    Skills, WorldSnapshot, extend_event_log_hash, world_hash_with_event_log_hash,
+    Residence, Skills, WorldSnapshot, extend_event_log_hash, world_hash_with_event_log_hash,
 };
 use bevy::prelude::World;
 
 use crate::{
-    DeadRegistry, EventDigest, EventLog, Gods, HashHistory, NextHumanId, PopulationHistory,
-    PopulationPoint, SimulationRng, SimulationStats, Viruses, WorldClock,
+    DeadRegistry, EventDigest, EventLog, Gods, HashHistory, NextHumanId, NextResidenceId,
+    PopulationHistory, PopulationPoint, SimulationRng, SimulationStats, Viruses, WorldClock,
 };
 
 fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
@@ -21,6 +21,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
         &Body,
         &Skills,
         &Lineage,
+        &Residence,
         Option<&Infection>,
     )>();
     query
@@ -35,6 +36,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
                 body,
                 skills,
                 lineage,
+                residence,
                 infection,
             )| {
                 (
@@ -48,6 +50,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
                         body: body.clone(),
                         skills: skills.clone(),
                         lineage: lineage.clone(),
+                        residence: *residence,
                         infection: infection.cloned(),
                     },
                 )
@@ -62,6 +65,7 @@ fn snapshot_with_log(world: &mut World, include_log: bool) -> WorldSnapshot {
         seed: world.resource::<SimulationRng>().0.master_seed,
         tick: world.resource::<WorldClock>().0,
         next_human_id: world.resource::<NextHumanId>().0,
+        next_residence_id: world.resource::<NextResidenceId>().0,
         humans,
         dead: world.resource::<DeadRegistry>().0.clone(),
         viruses: world.resource::<Viruses>().0.clone(),

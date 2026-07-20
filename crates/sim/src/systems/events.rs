@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, ChanceTemplate, Consciousness, EventAuthor, EventOutcome, EventPayload, Genome, GodId,
     HumanId, HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, Phenotype,
-    Skills, WorldView, resolve,
+    Residence, Skills, WorldView, exercised_skill, learning_gain, resolve,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
 use crate::{
-    EventIntake, EventLog, Gods, NextHumanId, SimulationFaults, SimulationRng, SimulationStats,
-    Viruses, WorldClock,
+    EventIntake, EventLog, Gods, NextHumanId, NextResidenceId, SimulationFaults, SimulationRng,
+    SimulationStats, Viruses, WorldClock,
 };
 
 use super::birth::{Newborn, spawn_newborn};
@@ -27,6 +27,7 @@ type EventHumanQuery<'w, 's> = Query<
         &'static mut Body,
         &'static mut Skills,
         &'static mut Lineage,
+        &'static Residence,
         Option<&'static Infection>,
     ),
 >;
@@ -39,6 +40,7 @@ type EventParams<'w, 's> = (
     Res<'w, Viruses>,
     ResMut<'w, EventLog>,
     ResMut<'w, NextHumanId>,
+    ResMut<'w, NextResidenceId>,
     ResMut<'w, Gods>,
     ResMut<'w, SimulationFaults>,
     ResMut<'w, SimulationStats>,
@@ -59,6 +61,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                 body,
                 skills,
                 lineage,
+                residence,
                 infection,
             )| {
                 (
@@ -72,6 +75,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                         body: body.clone(),
                         skills: skills.clone(),
                         lineage: lineage.clone(),
+                        residence: *residence,
                         infection: infection.cloned(),
                     },
                 )
@@ -86,6 +90,7 @@ struct ApplyContext<'a, 'w, 's> {
     tick: anana_core::Tick,
     viruses: &'a Viruses,
     next_id: &'a mut NextHumanId,
+    next_residence: &'a mut NextResidenceId,
     faults: &'a mut SimulationFaults,
     stats: &'a mut SimulationStats,
 }
@@ -100,11 +105,13 @@ fn apply_outcome(
     };
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<BTreeMap<_, _>>();
     for (id, effect) in effects {
         if let Some(entity) = entities.get(id).copied() {
-            let Ok((_, _, _, _, _, _, mut body, mut skills, _, _)) = humans.get_mut(entity) else {
+            let Ok((_, _, _, _, _, consciousness, mut body, mut skills, _, _, _)) =
+                humans.get_mut(entity)
+            else {
                 continue;
             };
             let health = i64::from(body.health).saturating_add(i64::from(effect.health_delta));
@@ -114,8 +121,8 @@ fn apply_outcome(
             body.fertility = fertility.clamp(0, 100) as u8;
             body.age_ticks = body.age_ticks.saturating_add(effect.age_ticks_delta);
             for (skill, xp) in &effect.skill_xp {
-                let state = skills.levels.entry(*skill).or_default();
-                state.xp = state.xp.saturating_add(*xp);
+                let _result =
+                    anana_core::apply_calculated_learning(&mut skills, consciousness, *skill, *xp);
             }
             body.immunities
                 .extend(effect.immunities_granted.iter().copied());
@@ -142,6 +149,13 @@ fn apply_outcome(
                     continue;
                 }
             };
+            let residence_id = match context.next_residence.allocate() {
+                Ok(residence) => residence,
+                Err(error) => {
+                    context.faults.0.push(error);
+                    continue;
+                }
+            };
             let phenotype = anana_core::express(&genome, &context.rng, context.tick, allocated);
             spawn_newborn(
                 context.commands,
@@ -163,11 +177,65 @@ fn apply_outcome(
                     },
                     skills: Skills::default(),
                     lineage: Lineage::new(allocated, None, None, 0, context.tick),
+                    residence: Residence { id: residence_id },
                 },
             );
             context.stats.births = context.stats.births.saturating_add(1);
         }
     }
+}
+
+fn add_lived_experience(
+    outcome: &mut EventOutcome,
+    template: ChanceTemplate,
+    humans: &BTreeMap<HumanId, HumanState>,
+) {
+    let EventOutcome::Occurred(effects) = outcome else {
+        return;
+    };
+    let skill = exercised_skill(template);
+    for (id, effect) in effects {
+        let Some(human) = humans.get(id) else {
+            continue;
+        };
+        if let Ok(gain) = learning_gain(
+            &human.skills,
+            &human.consciousness,
+            &human.phenotype,
+            skill,
+            20,
+        ) && gain > 0
+        {
+            effect.skill_xp.insert(skill, gain);
+        }
+    }
+}
+
+fn co_resident_participants(
+    humans: &BTreeMap<HumanId, HumanState>,
+    subject: HumanId,
+    limit: usize,
+) -> Vec<HumanId> {
+    let Some(anchor) = humans.get(&subject) else {
+        return Vec::new();
+    };
+    let group = humans
+        .values()
+        .filter(|human| human.body.alive && human.residence == anchor.residence)
+        .map(|human| human.id)
+        .collect::<Vec<_>>();
+    let Some(start) = group.iter().position(|id| *id == subject) else {
+        return Vec::new();
+    };
+    (0..limit.min(group.len()))
+        .filter_map(|offset| {
+            start
+                .checked_add(offset)
+                .and_then(|index| index.checked_rem(group.len()))
+                .and_then(|index| group.get(index))
+                .copied()
+        })
+        .collect()
 }
 
 pub(crate) fn events(params: EventParams<'_, '_>) {
@@ -179,6 +247,7 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
         viruses,
         mut log,
         mut next_id,
+        mut next_residence,
         mut gods,
         mut faults,
         mut stats,
@@ -212,6 +281,7 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
             tick: pending.tick,
             viruses: &viruses,
             next_id: &mut next_id,
+            next_residence: &mut next_residence,
             faults: &mut faults,
             stats: &mut stats,
         };
@@ -249,36 +319,38 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
                 continue;
             }
         };
-        let subjects = [subject];
+        let subjects = co_resident_participants(&canonical, subject, 3);
         let view = WorldView {
             humans: &canonical,
             subjects: &subjects,
             next_human_id: next_id.0,
         };
+        let template = match (clock.0.0 / 10) % 4 {
+            0 => ChanceTemplate::Accident,
+            1 => ChanceTemplate::Discovery,
+            2 => ChanceTemplate::Conflict,
+            _ => ChanceTemplate::Windfall,
+        };
         let payload = EventPayload::Chance {
-            template: ChanceTemplate::Accident,
+            template,
             base_prob: Permille(20),
             skill_modifier: Some(anana_core::SkillId::Planning),
             modifier_strength: Permille(10),
         };
-        let outcome = resolve(&payload, &view, &rng.0, clock.0, seq);
+        let mut outcome = resolve(&payload, &view, &rng.0, clock.0, seq);
+        add_lived_experience(&mut outcome, template, &canonical);
         let mut context = ApplyContext {
             commands: &mut commands,
             rng: rng.0,
             tick: clock.0,
             viruses: &viruses,
             next_id: &mut next_id,
+            next_residence: &mut next_residence,
             faults: &mut faults,
             stats: &mut stats,
         };
         apply_outcome(&outcome, &mut humans, &mut context);
-        if let Err(error) = log.append(
-            clock.0,
-            EventAuthor::Engine,
-            vec![subject],
-            payload,
-            outcome,
-        ) {
+        if let Err(error) = log.append(clock.0, EventAuthor::Engine, subjects, payload, outcome) {
             faults.0.push(error);
         }
     }

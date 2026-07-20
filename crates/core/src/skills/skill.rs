@@ -25,6 +25,7 @@ pub struct SkillState {
 #[cfg_attr(feature = "ecs", derive(bevy_ecs::component::Component))]
 pub struct Skills {
     pub levels: BTreeMap<SkillId, SkillState>,
+    pub memories: BTreeMap<SkillId, super::SkillMemory>,
 }
 
 impl Skills {

@@ -348,6 +348,9 @@ mod tests {
             body: Body::at_birth(&phenotype),
             skills,
             lineage: Lineage::new(id, None, None, 2, Tick(0)),
+            residence: anana_core::Residence {
+                id: anana_core::ResidenceId(1),
+            },
             infection: None,
         }
     }
@@ -393,6 +396,7 @@ mod tests {
             seed: 42,
             tick: Tick(9),
             next_human_id: HumanId(3),
+            next_residence_id: anana_core::ResidenceId(2),
             humans: BTreeMap::from([
                 (HumanId(2), human(HumanId(2), true)),
                 (HumanId(1), human(HumanId(1), false)),

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anana_core::{
     Body, Consciousness, DeterministicKind, EffectSummary, EventAuthor, EventOutcome, EventPayload,
-    Genome, HumanId, Instincts, Lineage, Phenotype, Skills, conceive, express,
+    Genome, HumanId, Instincts, Lineage, Phenotype, Residence, Skills, conceive, express,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
@@ -31,6 +31,7 @@ type ParentQuery<'w, 's> = Query<
         &'static Genome,
         &'static Instincts,
         &'static mut Lineage,
+        &'static Residence,
     ),
 >;
 
@@ -40,6 +41,7 @@ struct ParentSnapshot {
     genome: Genome,
     instincts: Instincts,
     generation: u32,
+    residence: Residence,
 }
 
 pub(crate) struct Newborn {
@@ -50,6 +52,7 @@ pub(crate) struct Newborn {
     pub consciousness: Consciousness,
     pub skills: Skills,
     pub lineage: Lineage,
+    pub residence: Residence,
 }
 
 pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
@@ -63,6 +66,7 @@ pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
         body,
         newborn.skills,
         newborn.lineage,
+        newborn.residence,
     ));
 }
 
@@ -88,7 +92,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
         resources;
     let parents = humans
         .iter_mut()
-        .map(|(entity, id, genome, instincts, lineage)| {
+        .map(|(entity, id, genome, instincts, lineage, residence)| {
             (
                 *id,
                 ParentSnapshot {
@@ -96,6 +100,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
                     genome: genome.clone(),
                     instincts: instincts.clone(),
                     generation: lineage.generation,
+                    residence: *residence,
                 },
             )
         })
@@ -126,11 +131,11 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
             generation,
             clock.0,
         );
-        if let Ok((_, _, _, _, mut lineage)) = humans.get_mut(mother.entity) {
+        if let Ok((_, _, _, _, mut lineage, _)) = humans.get_mut(mother.entity) {
             lineage.children.push(child_id);
             lineage.last_birth_tick = Some(clock.0);
         }
-        if let Ok((_, _, _, _, mut lineage)) = humans.get_mut(father.entity) {
+        if let Ok((_, _, _, _, mut lineage, _)) = humans.get_mut(father.entity) {
             lineage.children.push(child_id);
         }
         let newborn = Newborn {
@@ -145,6 +150,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
             },
             skills: Skills::default(),
             lineage,
+            residence: mother.residence,
         };
         spawn_newborn(&mut commands, newborn);
         let outcome = EventOutcome::Occurred(BTreeMap::from([(
