@@ -8,4 +8,6 @@ pub enum CoreError {
     BadDose(u8),
     #[error("skill {0:?} is locked below its awareness threshold")]
     SkillLocked(SkillId),
+    #[error("the decree resolved to no existing human")]
+    EmptyTarget,
 }
