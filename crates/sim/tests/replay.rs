@@ -43,3 +43,16 @@ fn recorded_goshes_replay_to_the_identical_per_tick_hash_history() {
 
     assert_eq!(replayed.world().resource::<HashHistory>().0, history);
 }
+
+#[test]
+fn replay_can_stop_at_an_explicit_tick_for_history_scrubbing() {
+    let config = Config::default();
+    let mut original = build_headless_app(42, config.clone());
+    for _ in 0..100 {
+        step(&mut original);
+    }
+    let history = original.world().resource::<HashHistory>().0.clone();
+    let records = original.world().resource::<EventLog>().records().to_vec();
+    let replayed = anana_sim::replay_for_ticks(42, config, records, 50);
+    assert_eq!(replayed.world().resource::<HashHistory>().0, history[..50]);
+}
