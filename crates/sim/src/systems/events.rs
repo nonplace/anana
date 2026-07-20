@@ -1,0 +1,284 @@
+use std::collections::BTreeMap;
+
+use anana_core::{
+    Body, ChanceTemplate, Consciousness, EventAuthor, EventOutcome, EventPayload, Genome, GodId,
+    HumanId, HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, Phenotype,
+    Skills, WorldView, resolve,
+};
+use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
+
+use crate::{
+    EventIntake, EventLog, Gods, NextHumanId, SimulationFaults, SimulationRng, SimulationStats,
+    Viruses, WorldClock,
+};
+
+use super::birth::{Newborn, spawn_newborn};
+
+type EventHumanQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static HumanId,
+        &'static Genome,
+        &'static Phenotype,
+        &'static Instincts,
+        &'static Consciousness,
+        &'static mut Body,
+        &'static mut Skills,
+        &'static mut Lineage,
+        Option<&'static Infection>,
+    ),
+>;
+
+type EventParams<'w, 's> = (
+    Commands<'w, 's>,
+    Res<'w, WorldClock>,
+    Res<'w, SimulationRng>,
+    Res<'w, EventIntake>,
+    Res<'w, Viruses>,
+    ResMut<'w, EventLog>,
+    ResMut<'w, NextHumanId>,
+    ResMut<'w, Gods>,
+    ResMut<'w, SimulationFaults>,
+    ResMut<'w, SimulationStats>,
+    EventHumanQuery<'w, 's>,
+);
+
+fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, HumanState> {
+    humans
+        .iter_mut()
+        .map(
+            |(
+                _,
+                id,
+                genome,
+                phenotype,
+                instincts,
+                consciousness,
+                body,
+                skills,
+                lineage,
+                infection,
+            )| {
+                (
+                    *id,
+                    HumanState {
+                        id: *id,
+                        genome: genome.clone(),
+                        phenotype: phenotype.clone(),
+                        instincts: instincts.clone(),
+                        consciousness: consciousness.clone(),
+                        body: body.clone(),
+                        skills: skills.clone(),
+                        lineage: lineage.clone(),
+                        infection: infection.cloned(),
+                    },
+                )
+            },
+        )
+        .collect()
+}
+
+struct ApplyContext<'a, 'w, 's> {
+    commands: &'a mut Commands<'w, 's>,
+    rng: anana_core::Rng,
+    tick: anana_core::Tick,
+    viruses: &'a Viruses,
+    next_id: &'a mut NextHumanId,
+    faults: &'a mut SimulationFaults,
+    stats: &'a mut SimulationStats,
+}
+
+fn apply_outcome(
+    outcome: &EventOutcome,
+    humans: &mut EventHumanQuery<'_, '_>,
+    context: &mut ApplyContext<'_, '_, '_>,
+) {
+    let EventOutcome::Occurred(effects) = outcome else {
+        return;
+    };
+    let entities = humans
+        .iter_mut()
+        .map(|(entity, id, _, _, _, _, _, _, _, _)| (*id, entity))
+        .collect::<BTreeMap<_, _>>();
+    for (id, effect) in effects {
+        if let Some(entity) = entities.get(id).copied() {
+            let Ok((_, _, _, _, _, _, mut body, mut skills, _, _)) = humans.get_mut(entity) else {
+                continue;
+            };
+            let health = i64::from(body.health).saturating_add(i64::from(effect.health_delta));
+            body.health = health.clamp(0, i64::from(body.max_health)) as u16;
+            let fertility =
+                i64::from(body.fertility).saturating_add(i64::from(effect.fertility_delta));
+            body.fertility = fertility.clamp(0, 100) as u8;
+            body.age_ticks = body.age_ticks.saturating_add(effect.age_ticks_delta);
+            for (skill, xp) in &effect.skill_xp {
+                let state = skills.levels.entry(*skill).or_default();
+                state.xp = state.xp.saturating_add(*xp);
+            }
+            body.immunities
+                .extend(effect.immunities_granted.iter().copied());
+            if let Some(virus_id) = effect.infection
+                && !body.immunities.contains(&virus_id)
+            {
+                let severity = context
+                    .viruses
+                    .0
+                    .get(&virus_id)
+                    .map_or(0, |virus| virus.virulence);
+                context.commands.entity(entity).insert(Infection {
+                    strain: virus_id,
+                    ticks: 0,
+                    severity,
+                    phase: InfectionPhase::Incubating,
+                });
+            }
+        } else if let Some(genome) = effect.seeded_genome.clone() {
+            let allocated = match context.next_id.allocate() {
+                Ok(allocated) => allocated,
+                Err(error) => {
+                    context.faults.0.push(error);
+                    continue;
+                }
+            };
+            let phenotype = anana_core::express(&genome, &context.rng, context.tick, allocated);
+            spawn_newborn(
+                context.commands,
+                Newborn {
+                    id: allocated,
+                    genome,
+                    phenotype,
+                    instincts: Instincts {
+                        survival: 50,
+                        reproduction: 50,
+                        hunger: 50,
+                        fear: 50,
+                        social: 50,
+                    },
+                    consciousness: Consciousness {
+                        awareness: 1,
+                        focus: 10,
+                        memory_capacity: 20,
+                    },
+                    skills: Skills::default(),
+                    lineage: Lineage::new(allocated, None, None, 0, context.tick),
+                },
+            );
+            context.stats.births = context.stats.births.saturating_add(1);
+        }
+    }
+}
+
+pub(crate) fn events(params: EventParams<'_, '_>) {
+    let (
+        mut commands,
+        clock,
+        rng,
+        intake,
+        viruses,
+        mut log,
+        mut next_id,
+        mut gods,
+        mut faults,
+        mut stats,
+        mut humans,
+    ) = params;
+    let pending_events = match intake.drain() {
+        Ok(events) => events,
+        Err(error) => {
+            faults.0.push(error);
+            Vec::new()
+        }
+    };
+    for pending in pending_events {
+        let seq = match log.next_seq() {
+            Ok(seq) => seq,
+            Err(error) => {
+                faults.0.push(error);
+                continue;
+            }
+        };
+        let canonical = snapshot_humans(&mut humans);
+        let view = WorldView {
+            humans: &canonical,
+            subjects: &pending.subjects,
+            next_human_id: next_id.0,
+        };
+        let outcome = resolve(&pending.payload, &view, &rng.0, pending.tick, seq);
+        let mut context = ApplyContext {
+            commands: &mut commands,
+            rng: rng.0,
+            tick: pending.tick,
+            viruses: &viruses,
+            next_id: &mut next_id,
+            faults: &mut faults,
+            stats: &mut stats,
+        };
+        apply_outcome(&outcome, &mut humans, &mut context);
+        if let Err(error) = log.append(
+            pending.tick,
+            pending.author,
+            pending.subjects,
+            pending.payload,
+            outcome,
+        ) {
+            faults.0.push(error);
+        }
+        if pending.author == EventAuthor::God
+            && let Some(god) = gods.0.get_mut(&GodId(1))
+        {
+            god.goshes_spoken = god.goshes_spoken.saturating_add(1);
+        }
+    }
+
+    if !clock.0.0.is_multiple_of(10) {
+        return;
+    }
+    let subject_ids = snapshot_humans(&mut humans)
+        .into_iter()
+        .filter_map(|(id, human)| human.body.alive.then_some(id))
+        .collect::<Vec<_>>();
+    for subject in subject_ids {
+        let seq = match log.next_seq() {
+            Ok(seq) => seq,
+            Err(error) => {
+                faults.0.push(error);
+                continue;
+            }
+        };
+        let canonical = snapshot_humans(&mut humans);
+        let subjects = [subject];
+        let view = WorldView {
+            humans: &canonical,
+            subjects: &subjects,
+            next_human_id: next_id.0,
+        };
+        let payload = EventPayload::Chance {
+            template: ChanceTemplate::Accident,
+            base_prob: Permille(20),
+            skill_modifier: Some(anana_core::SkillId::Planning),
+            modifier_strength: Permille(10),
+        };
+        let outcome = resolve(&payload, &view, &rng.0, clock.0, seq);
+        let mut context = ApplyContext {
+            commands: &mut commands,
+            rng: rng.0,
+            tick: clock.0,
+            viruses: &viruses,
+            next_id: &mut next_id,
+            faults: &mut faults,
+            stats: &mut stats,
+        };
+        apply_outcome(&outcome, &mut humans, &mut context);
+        if let Err(error) = log.append(
+            clock.0,
+            EventAuthor::Engine,
+            vec![subject],
+            payload,
+            outcome,
+        ) {
+            faults.0.push(error);
+        }
+    }
+}

@@ -7,13 +7,34 @@ use anana_core::{
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
-    prelude::{App, MinimalPlugins, Plugin, PluginGroup},
+    ecs::schedule::{ScheduleLabel, SystemSet},
+    prelude::{App, IntoScheduleConfigs, MinimalPlugins, Plugin, PluginGroup},
 };
 
+use crate::systems::{
+    advance_clock, aging_health, birth, death, events, learning, logging_and_hash, mating,
+    virus_spread,
+};
 use crate::{
     Config, EventIntake, EventLog, Gods, HashHistory, NextHumanId, PendingBirths, SimulationFaults,
     SimulationRng, SimulationStats, Viruses, WorldClock,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
+pub struct SimTick;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, SystemSet)]
+enum TickPhase {
+    AdvanceClock,
+    AgingHealth,
+    Learning,
+    Mating,
+    Birth,
+    VirusSpread,
+    Events,
+    Death,
+    LoggingAndHash,
+}
 
 pub struct SimPlugin {
     seed: u64,
@@ -49,7 +70,32 @@ impl Plugin for SimPlugin {
                     id: GodId(1),
                     goshes_spoken: 0,
                 },
-            )])));
+            )])))
+            .init_schedule(SimTick)
+            .configure_sets(
+                SimTick,
+                (
+                    TickPhase::AdvanceClock,
+                    TickPhase::AgingHealth,
+                    TickPhase::Learning,
+                    TickPhase::Mating,
+                    TickPhase::Birth,
+                    TickPhase::VirusSpread,
+                    TickPhase::Events,
+                    TickPhase::Death,
+                    TickPhase::LoggingAndHash,
+                )
+                    .chain(),
+            )
+            .add_systems(SimTick, advance_clock.in_set(TickPhase::AdvanceClock))
+            .add_systems(SimTick, aging_health.in_set(TickPhase::AgingHealth))
+            .add_systems(SimTick, learning.in_set(TickPhase::Learning))
+            .add_systems(SimTick, mating.in_set(TickPhase::Mating))
+            .add_systems(SimTick, birth.in_set(TickPhase::Birth))
+            .add_systems(SimTick, virus_spread.in_set(TickPhase::VirusSpread))
+            .add_systems(SimTick, events.in_set(TickPhase::Events))
+            .add_systems(SimTick, death.in_set(TickPhase::Death))
+            .add_systems(SimTick, logging_and_hash.in_set(TickPhase::LoggingAndHash));
     }
 }
 
@@ -220,14 +266,23 @@ pub fn build_headless_app(seed: u64, config: Config) -> App {
     app
 }
 
+pub fn step(app: &mut App) {
+    app.world_mut().run_schedule(SimTick);
+}
+
 #[cfg(test)]
 mod tests {
     //! App construction seeds stable founder components and exactly one initial infection.
 
-    use anana_core::{Body, HumanId, Infection, Lineage, Phenotype};
+    use std::collections::BTreeMap;
+
+    use anana_core::{Body, Boon, EventAuthor, GoshKind, HumanId, Infection, Lineage, Phenotype};
 
     use super::*;
-    use crate::{Config, NextHumanId, SimulationFaults, Viruses};
+    use crate::{
+        Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationFaults, Viruses,
+        WorldClock,
+    };
 
     #[test]
     fn headless_app_construction_seeds_the_requested_founders_in_domain_id_order() {
@@ -272,5 +327,63 @@ mod tests {
         assert_eq!(infected, 1);
         assert_eq!(app.world().resource::<Viruses>().0.len(), 1);
         assert!(app.world().resource::<SimulationFaults>().0.is_empty());
+    }
+
+    #[test]
+    fn one_explicit_step_advances_the_clock_and_every_living_body_once() {
+        let mut app = build_headless_app(42, Config::default());
+        let before = app
+            .world_mut()
+            .query::<(&HumanId, &Body)>()
+            .iter(app.world())
+            .map(|(id, body)| (*id, body.age_ticks))
+            .collect::<BTreeMap<_, _>>();
+        step(&mut app);
+        assert_eq!(app.world().resource::<WorldClock>().0.0, 1);
+        let after = app
+            .world_mut()
+            .query::<(&HumanId, &Body)>()
+            .iter(app.world())
+            .map(|(id, body)| (*id, body.age_ticks))
+            .collect::<BTreeMap<_, _>>();
+        assert!(
+            before
+                .iter()
+                .all(|(id, age)| after.get(id) == Some(&age.saturating_add(1)))
+        );
+    }
+
+    #[test]
+    fn a_captured_gosh_is_logged_and_reproduces_the_same_tick_hash() {
+        let mut first = build_headless_app(42, Config::default());
+        let mut second = build_headless_app(42, Config::default());
+        for app in [&mut first, &mut second] {
+            let mut query = app.world_mut().query::<(&HumanId, &mut Body)>();
+            for (id, mut body) in query.iter_mut(app.world_mut()) {
+                if *id == HumanId(1) {
+                    body.health = body.health.saturating_sub(10);
+                }
+            }
+            app.world()
+                .resource::<EventIntake>()
+                .cast_gosh(
+                    app.world().resource::<WorldClock>().0,
+                    GoshKind::Bless {
+                        subject: HumanId(1),
+                        boon: Boon::Heal(5),
+                    },
+                )
+                .expect("intake is available");
+            step(app);
+        }
+        let records = first.world().resource::<EventLog>().records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].author, EventAuthor::God);
+        assert_eq!(records[0].tick.0, 0);
+        assert_eq!(records[0].seq.0, 0);
+        assert_eq!(
+            first.world().resource::<HashHistory>().0,
+            second.world().resource::<HashHistory>().0
+        );
     }
 }
