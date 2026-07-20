@@ -4,6 +4,8 @@
 
 mod error;
 mod types;
+mod validation;
 
 pub use error::*;
 pub use types::*;
+pub use validation::*;

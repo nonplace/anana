@@ -133,9 +133,9 @@ pub struct AiEventProposal {
     pub kind: AiEventKind,
     pub title: String,
     pub description: String,
-    pub base_prob: Option<u16>,
+    pub base_prob: Option<i64>,
     pub skill_modifier: Option<SkillId>,
-    pub modifier_strength: Option<u16>,
+    pub modifier_strength: Option<i64>,
     pub effects: Vec<AiEffect>,
     pub seed_salt: u32,
 }
