@@ -49,6 +49,7 @@ name = "anana-mind"
 version = "0.1.0"
 dependencies = [
  "anana-core",
+ "blake3",
  "reqwest",
  "serde",
  "serde_json",
