@@ -3,6 +3,7 @@
 //! This crate has no I/O, async runtime, wall clock, or ambient randomness.
 
 mod body;
+mod bonds;
 mod consciousness;
 mod error;
 mod event;
@@ -21,6 +22,7 @@ mod virus;
 mod world;
 
 pub use body::*;
+pub use bonds::*;
 pub use consciousness::*;
 pub use error::*;
 pub use event::*;

@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
     Body, Consciousness, Genome, HumanId, HumanState, Infection, Instincts, Lineage, Phenotype,
-    Residence, Skills, WorldSnapshot, extend_event_log_hash, world_hash_with_event_log_hash,
+    Residence, Skills, SocialBonds, WorldSnapshot, extend_event_log_hash,
+    world_hash_with_event_log_hash,
 };
 use bevy::prelude::World;
 
@@ -22,6 +23,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
         &Skills,
         &Lineage,
         &Residence,
+        &SocialBonds,
         Option<&Infection>,
     )>();
     query
@@ -37,6 +39,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
                 skills,
                 lineage,
                 residence,
+                social_bonds,
                 infection,
             )| {
                 (
@@ -51,6 +54,7 @@ fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
                         skills: skills.clone(),
                         lineage: lineage.clone(),
                         residence: *residence,
+                        social_bonds: social_bonds.clone(),
                         infection: infection.cloned(),
                     },
                 )

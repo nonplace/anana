@@ -1,7 +1,8 @@
 use anana_core::{
     Body, Consciousness, HumanId, Instincts, LifeStage, ObservationFactors, Permille, Phenotype,
-    PracticeKind, Residence, RngDomain, SkillId, Skills, decay_unpractised, min_awareness,
-    observational_gain, practise_skill, teaching_gain,
+    PracticeKind, Residence, RngDomain, Sex, SkillId, Skills, SocialBonds,
+    courtship_aversion_factor, decay_bond, decay_unpractised, min_awareness, observational_gain,
+    practise_skill, record_positive_interaction_scaled, teaching_gain,
 };
 use bevy::prelude::{Entity, Query, Res};
 
@@ -46,6 +47,7 @@ struct LearnerSnapshot {
     consciousness: Consciousness,
     skills: Skills,
     residence: Residence,
+    sex: Sex,
 }
 
 type LearningQuery<'w, 's> = Query<
@@ -60,6 +62,7 @@ type LearningQuery<'w, 's> = Query<
         &'static mut Consciousness,
         &'static mut Skills,
         &'static Residence,
+        &'static mut SocialBonds,
     ),
 >;
 
@@ -115,32 +118,86 @@ pub(crate) fn learning(
     let mut snapshots = humans
         .iter_mut()
         .map(
-            |(_, id, body, instincts, _, consciousness, skills, residence)| LearnerSnapshot {
-                id: *id,
-                body: body.clone(),
-                instincts: instincts.clone(),
-                consciousness: consciousness.clone(),
-                skills: skills.clone(),
-                residence: *residence,
+            |(_, id, body, instincts, phenotype, consciousness, skills, residence, _)| {
+                LearnerSnapshot {
+                    id: *id,
+                    body: body.clone(),
+                    instincts: instincts.clone(),
+                    consciousness: consciousness.clone(),
+                    skills: skills.clone(),
+                    residence: *residence,
+                    sex: phenotype.sex,
+                }
             },
         )
         .collect::<Vec<_>>();
     snapshots.sort_by_key(|human| human.id);
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<std::collections::BTreeMap<_, _>>();
     for observer in &snapshots {
         let Some(entity) = entities.get(&observer.id).copied() else {
             continue;
         };
-        let Ok((_, _, body, instincts, phenotype, mut consciousness, mut skills, _)) =
-            humans.get_mut(entity)
+        let Ok((
+            _,
+            _,
+            body,
+            instincts,
+            phenotype,
+            mut consciousness,
+            mut skills,
+            _,
+            mut social_bonds,
+        )) = humans.get_mut(entity)
         else {
             continue;
         };
         if !body.alive {
             continue;
+        }
+        for bond in social_bonds.bonds.values_mut() {
+            decay_bond(bond, clock.0);
+        }
+        let co_residents = snapshots
+            .iter()
+            .filter(|other| {
+                other.id != observer.id && other.residence == observer.residence && other.body.alive
+            })
+            .collect::<Vec<_>>();
+        if body.age_ticks < 260 {
+            for other in &co_residents {
+                social_bonds
+                    .rearing_aversions
+                    .entry(other.id)
+                    .or_default()
+                    .observe_co_residence(body.age_ticks);
+            }
+        }
+        if clock.0.0.is_multiple_of(5) {
+            let mut social_contacts = co_residents.clone();
+            if body.fertility > 0 {
+                social_contacts.extend(snapshots.iter().filter(|other| {
+                    other.id != observer.id
+                        && other.residence != observer.residence
+                        && other.sex != observer.sex
+                        && other.body.alive
+                        && other.body.fertility > 0
+                        && other.body.age_ticks.abs_diff(body.age_ticks) <= 800
+                }));
+                social_contacts.sort_by_key(|other| other.id);
+                social_contacts.dedup_by_key(|other| other.id);
+            }
+            for other in social_contacts {
+                let aversion = social_bonds
+                    .rearing_aversions
+                    .get(&other.id)
+                    .map_or(Permille::ZERO, anana_core::RearingAversion::strength);
+                let factor = courtship_aversion_factor(aversion, Permille::ZERO);
+                let bond = social_bonds.bonds.entry(other.id).or_default();
+                record_positive_interaction_scaled(bond, clock.0, Permille::ZERO, factor);
+            }
         }
         let (awareness_cap, focus_cap) = developmental_caps(body.life_stage);
         if consciousness.awareness < awareness_cap {

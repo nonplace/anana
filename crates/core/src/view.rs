@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Body, Consciousness, Genome, HumanId, Infection, Instincts, Lineage, Phenotype, Residence,
-    Skills,
+    Skills, SocialBonds,
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -28,6 +28,7 @@ pub struct HumanState {
     pub skills: Skills,
     pub lineage: Lineage,
     pub residence: Residence,
+    pub social_bonds: SocialBonds,
     pub infection: Option<Infection>,
 }
 
@@ -89,6 +90,7 @@ pub(crate) fn fixture_human(id: HumanId) -> HumanState {
         residence: Residence {
             id: crate::ResidenceId(1),
         },
+        social_bonds: SocialBonds::default(),
         infection: None,
     }
 }
