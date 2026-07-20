@@ -7,7 +7,7 @@ use anana_core::{
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
-    ecs::schedule::{ScheduleLabel, SystemSet},
+    ecs::schedule::{MultiThreadedExecutor, ScheduleLabel, SingleThreadedExecutor, SystemSet},
     prelude::{App, IntoScheduleConfigs, MinimalPlugins, Plugin, PluginGroup},
 };
 
@@ -96,6 +96,15 @@ impl Plugin for SimPlugin {
             .add_systems(SimTick, events.in_set(TickPhase::Events))
             .add_systems(SimTick, death.in_set(TickPhase::Death))
             .add_systems(SimTick, logging_and_hash.in_set(TickPhase::LoggingAndHash));
+        if self.config.requested_threads <= 1 {
+            app.edit_schedule(SimTick, |schedule| {
+                schedule.set_executor(SingleThreadedExecutor::new());
+            });
+        } else {
+            app.edit_schedule(SimTick, |schedule| {
+                schedule.set_executor(MultiThreadedExecutor::new());
+            });
+        }
     }
 }
 
