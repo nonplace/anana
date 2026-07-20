@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     text::Line,
-    widgets::Paragraph,
+    widgets::{Block, Clear, Paragraph},
 };
 
 use crate::AppState;
@@ -73,4 +73,26 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
         .style(Style::default().fg(Color::DarkGray)),
         *hint_area,
     );
+    if let Some(form) = &state.gosh_form {
+        let full = frame.area();
+        let width = full.width.saturating_mul(2) / 3;
+        let height = 7_u16.min(full.height);
+        let modal = ratatui::layout::Rect {
+            x: full.x.saturating_add(full.width.saturating_sub(width) / 2),
+            y: full
+                .y
+                .saturating_add(full.height.saturating_sub(height) / 2),
+            width,
+            height,
+        };
+        frame.render_widget(Clear, modal);
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Draft: {:?}\n[b]less [a]fflict [t]each [s]eed [f]ertility [i]mmunity\n[+/-] magnitude [l] target  Enter confirm  Esc cancel",
+                form.draft
+            ))
+            .block(Block::bordered().title(" Speak a gosh ")),
+            modal,
+        );
+    }
 }
