@@ -21,6 +21,16 @@ pub fn replay(seed: u64, config: Config, records: Vec<EventRecord>) -> App {
     } else {
         recorded_ticks.max(1)
     };
+    replay_for_ticks(seed, config, records, total_ticks)
+}
+
+/// Rebuilds exactly the requested number of ticks for an interactive replay scrubber.
+pub fn replay_for_ticks(
+    seed: u64,
+    config: Config,
+    records: Vec<EventRecord>,
+    total_ticks: u64,
+) -> App {
     let mut authored = records
         .into_iter()
         .filter(|record| matches!(record.author, EventAuthor::God | EventAuthor::Ai))
