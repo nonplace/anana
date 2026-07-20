@@ -66,11 +66,13 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     feed::render(frame, *feed_area, state);
     inspector::render(frame, *inspector_area, state);
     narrative::render(frame, *narrative_area, state);
+    let hint = if state.mode == "replay" {
+        " PgUp/PgDn scrub ticks  ←/→ select  ↑/↓ feed  q quit "
+    } else {
+        " ←/→ select  ↑/↓ feed  tab focus  n narrate  g gosh  space pause  . step  q quit "
+    };
     frame.render_widget(
-        Paragraph::new(
-            " ←/→ select  ↑/↓ feed  tab focus  n narrate  g gosh  space pause  . step  q quit ",
-        )
-        .style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(hint).style(Style::default().fg(Color::DarkGray)),
         *hint_area,
     );
     if let Some(form) = &state.gosh_form {

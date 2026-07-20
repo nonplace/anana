@@ -6,6 +6,7 @@ mod widgets;
 
 pub use app_state::*;
 pub use input::*;
+pub use ratatui;
 pub use widgets::render;
 
 #[cfg(test)]
