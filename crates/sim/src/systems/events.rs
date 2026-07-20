@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, ChanceTemplate, Consciousness, EventAuthor, EventOutcome, EventPayload, Genome, GodId,
     HumanId, HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, Phenotype,
-    Residence, Skills, WorldView, exercised_skill, learning_gain, resolve,
+    Residence, Skills, SocialBonds, WorldView, exercised_skill, learning_gain, record_defection,
+    record_positive_interaction, resolve,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
@@ -28,6 +29,7 @@ type EventHumanQuery<'w, 's> = Query<
         &'static mut Skills,
         &'static mut Lineage,
         &'static Residence,
+        &'static mut SocialBonds,
         Option<&'static Infection>,
     ),
 >;
@@ -62,6 +64,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                 skills,
                 lineage,
                 residence,
+                social_bonds,
                 infection,
             )| {
                 (
@@ -76,6 +79,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                         skills: skills.clone(),
                         lineage: lineage.clone(),
                         residence: *residence,
+                        social_bonds: social_bonds.clone(),
                         infection: infection.cloned(),
                     },
                 )
@@ -105,11 +109,11 @@ fn apply_outcome(
     };
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<BTreeMap<_, _>>();
     for (id, effect) in effects {
         if let Some(entity) = entities.get(id).copied() {
-            let Ok((_, _, _, _, _, consciousness, mut body, mut skills, _, _, _)) =
+            let Ok((_, _, _, _, _, consciousness, mut body, mut skills, _, _, _, _)) =
                 humans.get_mut(entity)
             else {
                 continue;
@@ -178,6 +182,7 @@ fn apply_outcome(
                     skills: Skills::default(),
                     lineage: Lineage::new(allocated, None, None, 0, context.tick),
                     residence: Residence { id: residence_id },
+                    social_bonds: SocialBonds::default(),
                 },
             );
             context.stats.births = context.stats.births.saturating_add(1);
@@ -207,6 +212,38 @@ fn add_lived_experience(
         ) && gain > 0
         {
             effect.skill_xp.insert(skill, gain);
+        }
+    }
+}
+
+fn record_shared_relationship(
+    outcome: &EventOutcome,
+    template: ChanceTemplate,
+    subjects: &[HumanId],
+    humans: &mut EventHumanQuery<'_, '_>,
+    tick: anana_core::Tick,
+) {
+    if !matches!(outcome, EventOutcome::Occurred(_)) {
+        return;
+    }
+    let entities = humans
+        .iter_mut()
+        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
+        .collect::<BTreeMap<_, _>>();
+    for observer in subjects {
+        let Some(entity) = entities.get(observer).copied() else {
+            continue;
+        };
+        let Ok((_, _, _, _, _, _, _, _, _, _, mut bonds, _)) = humans.get_mut(entity) else {
+            continue;
+        };
+        for other in subjects.iter().copied().filter(|other| other != observer) {
+            let bond = bonds.bonds.entry(other).or_default();
+            if template == ChanceTemplate::Conflict && Some(&other) == subjects.first() {
+                record_defection(bond, tick);
+            } else {
+                record_positive_interaction(bond, tick, Permille::ZERO);
+            }
         }
     }
 }
@@ -350,6 +387,7 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
             stats: &mut stats,
         };
         apply_outcome(&outcome, &mut humans, &mut context);
+        record_shared_relationship(&outcome, template, &subjects, &mut humans, clock.0);
         if let Err(error) = log.append(clock.0, EventAuthor::Engine, subjects, payload, outcome) {
             faults.0.push(error);
         }

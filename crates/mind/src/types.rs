@@ -351,6 +351,7 @@ mod tests {
             residence: anana_core::Residence {
                 id: anana_core::ResidenceId(1),
             },
+            social_bonds: anana_core::SocialBonds::default(),
             infection: None,
         }
     }

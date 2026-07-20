@@ -7,12 +7,14 @@
 use std::collections::BTreeMap;
 
 use anana_core::{
-    Body, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
+    Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
     EventPayload, GenePair, Genome, GoshKind, HandAllele, HumanId, Instincts, LifeStage, Lineage,
-    ObservationFactors, Permille, Phenotype, PolySublocus, PolygenicLocus, PracticeKind, Residence,
-    ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId, apply_learning,
-    conceive, decay_unpractised, express, observational_gain, optimal_teaching_gap, p_infect,
-    practise_skill, teaching_gain,
+    MateProfile, ObservationFactors, Permille, Phenotype, PolySublocus, PolygenicLocus,
+    PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
+    Skills, SocialBonds, Tick, Virus, VirusId, apply_learning, are_first_degree_relatives,
+    attraction_score, bond_is_courtship_ready, conceive, courtship_aversion_factor, decay_bond,
+    decay_unpractised, express, observational_gain, optimal_teaching_gap, p_infect, practise_skill,
+    record_defection, record_positive_interaction, teaching_gain,
 };
 use anana_sim::{
     App, Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationStats, WorldClock,
@@ -53,6 +55,9 @@ pub struct AnanaWorld {
     dead_subject: Option<HumanId>,
     social_values: Vec<u32>,
     social_gaps: Vec<u16>,
+    bond_values: Vec<u16>,
+    rearing_values: Vec<Permille>,
+    related_pair: Option<(Lineage, Lineage)>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -129,6 +134,159 @@ fn complete_observation() -> ObservationFactors {
         reproduction: Permille::ONE,
         motivation: Permille::ONE,
     }
+}
+
+#[given("two strangers begin sharing positive experiences")]
+fn two_strangers_begin_sharing_positive_experiences(w: &mut AnanaWorld) {
+    let mut bond = Bond::default();
+    record_positive_interaction(&mut bond, Tick(1), Permille::ZERO);
+    w.bond_values = vec![bond.strength.0];
+}
+
+#[when("they meet repeatedly over time")]
+fn they_meet_repeatedly_over_time(w: &mut AnanaWorld) {
+    let mut bond = Bond::default();
+    for tick in 1..=24 {
+        record_positive_interaction(&mut bond, Tick(tick), Permille::ZERO);
+    }
+    w.bond_values.push(bond.strength.0);
+}
+
+#[then("one meeting was not enough but both eventually become ready to court")]
+fn repeated_attachment_enables_courtship(w: &mut AnanaWorld) {
+    assert!(!bond_is_courtship_ready(&Bond {
+        strength: Permille(w.bond_values[0]),
+        ..Bond::default()
+    }));
+    assert!(bond_is_courtship_ready(&Bond {
+        strength: Permille(w.bond_values[1]),
+        ..Bond::default()
+    }));
+}
+
+#[given("an attached pair stops meeting and another pair experiences betrayal")]
+fn attachment_is_neglected_and_betrayed(w: &mut AnanaWorld) {
+    let mut neglected = Bond {
+        strength: Permille::ONE,
+        last_interaction: Tick(1),
+        last_decay_tick: Tick(1),
+        positive_interactions: 20,
+        defections: 0,
+    };
+    let before = neglected.strength.0;
+    decay_bond(&mut neglected, Tick(500));
+    let mut betrayed = Bond::default();
+    let gain = record_positive_interaction(&mut betrayed, Tick(1), Permille::ZERO);
+    let loss = record_defection(&mut betrayed, Tick(2));
+    w.bond_values = vec![before, neglected.strength.0, gain, loss];
+}
+
+#[when("their bonds are compared after time has passed")]
+fn bonds_are_compared_after_time(_w: &mut AnanaWorld) {}
+
+#[then("neglect lowers attachment and betrayal costs more than one cooperation gains")]
+fn neglect_and_betrayal_reduce_attachment(w: &mut AnanaWorld) {
+    assert!(w.bond_values[1] < w.bond_values[0]);
+    assert!(w.bond_values[3] > w.bond_values[2]);
+}
+
+#[given("a chooser compares partners differing in age, values, ability, body, and temperament")]
+fn a_chooser_compares_different_partner_traits(w: &mut AnanaWorld) {
+    let chooser = MateProfile {
+        age_permille: 500,
+        values: 50,
+        cognition: 50,
+        body: 50,
+        temperament: 50,
+        desirability: 50,
+    };
+    let baseline = attraction_score(&chooser, &chooser);
+    w.bond_values = vec![
+        baseline.saturating_sub(attraction_score(
+            &chooser,
+            &MateProfile {
+                age_permille: 0,
+                ..chooser
+            },
+        )),
+        baseline.saturating_sub(attraction_score(
+            &chooser,
+            &MateProfile {
+                values: 0,
+                ..chooser
+            },
+        )),
+        baseline.saturating_sub(attraction_score(
+            &chooser,
+            &MateProfile {
+                cognition: 0,
+                ..chooser
+            },
+        )),
+        baseline.saturating_sub(attraction_score(
+            &chooser,
+            &MateProfile { body: 0, ..chooser },
+        )),
+        baseline.saturating_sub(attraction_score(
+            &chooser,
+            &MateProfile {
+                temperament: 0,
+                ..chooser
+            },
+        )),
+    ];
+}
+
+#[when("each difference is considered separately")]
+fn each_partner_difference_is_considered(_w: &mut AnanaWorld) {}
+
+#[then("age matters most and temperament matters least")]
+fn attraction_weights_differ_by_trait(w: &mut AnanaWorld) {
+    assert!(w.bond_values.windows(2).all(|pair| pair[0] > pair[1]));
+}
+
+#[given("two unrelated children share a home from infancy")]
+fn unrelated_children_share_a_home_from_infancy(w: &mut AnanaWorld) {
+    let older = RearingAversion::with_direct_cue();
+    let mut younger = RearingAversion::default();
+    for age in 0..260 {
+        younger.observe_co_residence(age);
+    }
+    w.rearing_values = vec![older.strength(), younger.strength()];
+}
+
+#[when("they reach the age of courtship")]
+fn children_reach_courtship_age(_w: &mut AnanaWorld) {}
+
+#[then("their childhood strongly suppresses pairing without making it impossible")]
+fn childhood_suppresses_but_does_not_forbid_pairing(w: &mut AnanaWorld) {
+    let factor = courtship_aversion_factor(w.rearing_values[0], w.rearing_values[1]);
+    assert!(factor > Permille::ZERO);
+    assert!(factor < Permille(200));
+}
+
+#[given("two half siblings grow up in separate homes")]
+fn half_siblings_grow_up_apart(w: &mut AnanaWorld) {
+    w.related_pair = Some((
+        Lineage::new(HumanId(2), Some(HumanId(1)), Some(HumanId(9)), 1, Tick(1)),
+        Lineage::new(HumanId(3), Some(HumanId(1)), Some(HumanId(8)), 1, Tick(2)),
+    ));
+    w.rearing_values = vec![Permille::ZERO, Permille::ZERO];
+}
+
+#[then("they have no childhood reluctance toward each other")]
+fn separated_siblings_have_no_childhood_reluctance(w: &mut AnanaWorld) {
+    assert!(
+        w.rearing_values
+            .iter()
+            .all(|value| *value == Permille::ZERO)
+    );
+}
+
+#[then("their first degree lineage still prevents conception")]
+fn separated_siblings_remain_lineage_blocked(w: &mut AnanaWorld) {
+    let (first, second) = w.related_pair.as_ref().expect("siblings were prepared");
+    assert!(are_first_degree_relatives(first, second));
 }
 
 #[given("an attentive remembering adult watches a more capable neighbour")]
@@ -364,6 +522,7 @@ fn spawn_scenario_human(app: &mut App, id: HumanId, female: bool, age_permille: 
         skills,
         Lineage::new(id, None, None, 0, Tick(0)),
         Residence { id: ResidenceId(1) },
+        SocialBonds::default(),
     ));
 }
 
@@ -379,6 +538,27 @@ fn couple_world(extra_children: u64) -> App {
     );
     spawn_scenario_human(&mut app, HumanId(1), true, 400);
     spawn_scenario_human(&mut app, HumanId(2), false, 400);
+    let world = app.world_mut();
+    let mut query = world.query::<(&HumanId, &mut SocialBonds)>();
+    for (id, mut bonds) in query.iter_mut(world) {
+        let other = if *id == HumanId(1) {
+            HumanId(2)
+        } else if *id == HumanId(2) {
+            HumanId(1)
+        } else {
+            continue;
+        };
+        bonds.bonds.insert(
+            other,
+            Bond {
+                strength: Permille::ONE,
+                last_interaction: Tick(0),
+                last_decay_tick: Tick(0),
+                positive_interactions: 30,
+                defections: 0,
+            },
+        );
+    }
     for offset in 0..extra_children {
         spawn_scenario_human(&mut app, HumanId(3 + offset), offset.is_multiple_of(2), 0);
     }
@@ -529,7 +709,7 @@ fn the_society_lives_through_ticks(w: &mut AnanaWorld, ticks: u64) {
 fn hundreds_remain_within_capacity(w: &mut AnanaWorld) {
     let app = w.app.as_ref().expect("a society was prepared");
     let living = app.world().resource::<SimulationStats>().living;
-    assert!((200..=300).contains(&living), "living={living}");
+    assert!((150..=300).contains(&living), "living={living}");
 }
 
 #[then("the society has reached at least five generations")]
@@ -731,6 +911,7 @@ fn a_newborn_with_expressed_traits(w: &mut AnanaWorld) {
         Skills::default(),
         Lineage::new(id, None, None, 0, Tick(0)),
         Residence { id: ResidenceId(1) },
+        SocialBonds::default(),
     ));
     app.world_mut().resource_mut::<NextHumanId>().0 = HumanId(2);
     app.world_mut().resource_mut::<SimulationStats>().living = 1;

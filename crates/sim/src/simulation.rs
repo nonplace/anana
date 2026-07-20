@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, Consciousness, DiseaseAllele, EyeAllele, GenePair, Genome, God, GodId, HandAllele,
     HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, PolySublocus,
-    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills, Tick,
-    express,
+    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills,
+    SocialBonds, Tick, express,
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -115,13 +115,26 @@ impl Plugin for SimPlugin {
 }
 
 fn founder_genome(index: u32) -> Genome {
-    let zero = PolySublocus {
-        maternal: 0,
-        paternal: 0,
+    let robustness = PolygenicLocus {
+        subloci: std::array::from_fn(|locus| {
+            let variable = locus < 2;
+            let dose = ((index >> locus) & 1) as u8;
+            PolySublocus {
+                maternal: if variable { dose } else { 0 },
+                paternal: if variable { dose } else { 1 },
+            }
+        }),
     };
-    let mixed = PolySublocus {
-        maternal: 0,
-        paternal: 1,
+    let aptitude_code = index.saturating_mul(37).saturating_add(11);
+    let aptitude = PolygenicLocus {
+        subloci: std::array::from_fn(|locus| {
+            let variable = locus < 2;
+            let dose = ((aptitude_code >> locus) & 1) as u8;
+            PolySublocus {
+                maternal: if variable { dose } else { 0 },
+                paternal: if variable { dose } else { 1 },
+            }
+        }),
     };
     let sex = if index.is_multiple_of(2) {
         GenePair {
@@ -160,12 +173,8 @@ fn founder_genome(index: u32) -> Genome {
             },
         },
         sex,
-        robustness: PolygenicLocus {
-            subloci: [mixed; 4],
-        },
-        aptitude: PolygenicLocus {
-            subloci: [zero, mixed, mixed, zero],
-        },
+        robustness,
+        aptitude,
     }
 }
 
@@ -255,6 +264,7 @@ fn seed_founders(app: &mut App) {
             skills,
             lineage,
             Residence { id: residence_id },
+            SocialBonds::default(),
         ));
         if index == 0 {
             entity.insert(Infection {

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use anana_core::{
     Body, Consciousness, DeterministicKind, EffectSummary, EventAuthor, EventOutcome, EventPayload,
-    Genome, HumanId, Instincts, Lineage, Phenotype, Residence, Skills, conceive, express,
+    Genome, HumanId, Instincts, Lineage, Phenotype, RearingAversion, Residence, Skills,
+    SocialBonds, conceive, express,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
@@ -32,6 +33,7 @@ type ParentQuery<'w, 's> = Query<
         &'static Instincts,
         &'static mut Lineage,
         &'static Residence,
+        &'static mut SocialBonds,
     ),
 >;
 
@@ -53,6 +55,7 @@ pub(crate) struct Newborn {
     pub skills: Skills,
     pub lineage: Lineage,
     pub residence: Residence,
+    pub social_bonds: SocialBonds,
 }
 
 pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
@@ -67,6 +70,7 @@ pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
         newborn.skills,
         newborn.lineage,
         newborn.residence,
+        newborn.social_bonds,
     ));
 }
 
@@ -92,7 +96,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
         resources;
     let parents = humans
         .iter_mut()
-        .map(|(entity, id, genome, instincts, lineage, residence)| {
+        .map(|(entity, id, genome, instincts, lineage, residence, _)| {
             (
                 *id,
                 ParentSnapshot {
@@ -131,12 +135,19 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
             generation,
             clock.0,
         );
-        if let Ok((_, _, _, _, mut lineage, _)) = humans.get_mut(mother.entity) {
+        if let Ok((_, _, _, _, mut lineage, _, _)) = humans.get_mut(mother.entity) {
             lineage.children.push(child_id);
             lineage.last_birth_tick = Some(clock.0);
         }
-        if let Ok((_, _, _, _, mut lineage, _)) = humans.get_mut(father.entity) {
+        if let Ok((_, _, _, _, mut lineage, _, _)) = humans.get_mut(father.entity) {
             lineage.children.push(child_id);
+        }
+        for (_, existing_id, _, _, _, residence, mut social_bonds) in &mut humans {
+            if *existing_id != child_id && *residence == mother.residence {
+                social_bonds
+                    .rearing_aversions
+                    .insert(child_id, RearingAversion::with_direct_cue());
+            }
         }
         let newborn = Newborn {
             id: child_id,
@@ -151,6 +162,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
             skills: Skills::default(),
             lineage,
             residence: mother.residence,
+            social_bonds: SocialBonds::default(),
         };
         spawn_newborn(&mut commands, newborn);
         let outcome = EventOutcome::Occurred(BTreeMap::from([(
