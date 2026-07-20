@@ -10,6 +10,7 @@ mod instincts;
 mod phenotype;
 mod rng;
 mod skills;
+mod virus;
 
 pub use consciousness::*;
 pub use error::*;
@@ -19,3 +20,4 @@ pub use instincts::*;
 pub use phenotype::*;
 pub use rng::*;
 pub use skills::*;
+pub use virus::*;
