@@ -17,6 +17,7 @@ mod rng;
 mod skills;
 mod view;
 mod virus;
+mod world;
 
 pub use body::*;
 pub use consciousness::*;
@@ -33,3 +34,4 @@ pub use rng::*;
 pub use skills::*;
 pub use view::*;
 pub use virus::*;
+pub use world::*;
