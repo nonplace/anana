@@ -1,8 +1,9 @@
 //! These scenarios prove that complete simulation trajectories are reproducible from their seeds.
 
-use anana_core::Seq;
+use anana_core::{Seq, world_hash};
 use anana_sim::{
-    Config, EventLog, HashHistory, SimulationFaults, SimulationStats, build_headless_app, step,
+    Config, EventLog, HashHistory, SimulationFaults, SimulationStats, build_headless_app, snapshot,
+    step,
 };
 
 fn run(seed: u64, config: Config, ticks: u64) -> anana_sim::App {
@@ -67,4 +68,14 @@ fn the_golden_scenario_keeps_living_humans_an_ordered_log_and_no_faults() {
     assert!(records.windows(2).all(|pair| pair[0].seq < pair[1].seq));
     assert_eq!(records.first().map(|record| record.seq), Some(Seq(0)));
     assert!(app.world().resource::<SimulationFaults>().0.is_empty());
+}
+
+#[test]
+fn the_public_snapshot_matches_the_hash_recorded_for_the_latest_tick() {
+    let mut app = run(42, Config::default(), 3);
+    let current = snapshot(&mut app);
+    assert_eq!(
+        app.world().resource::<HashHistory>().0.last(),
+        Some(&world_hash(&current))
+    );
 }

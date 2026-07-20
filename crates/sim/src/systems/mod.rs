@@ -14,6 +14,6 @@ pub(crate) use birth::birth;
 pub(crate) use death::death;
 pub(crate) use events::events;
 pub(crate) use learning::learning;
-pub(crate) use logging_and_hash::logging_and_hash;
+pub(crate) use logging_and_hash::{build_snapshot, logging_and_hash};
 pub(crate) use mating::mating;
 pub(crate) use virus_spread::virus_spread;

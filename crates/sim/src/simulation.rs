@@ -12,8 +12,8 @@ use bevy::{
 };
 
 use crate::systems::{
-    advance_clock, aging_health, birth, death, events, learning, logging_and_hash, mating,
-    virus_spread,
+    advance_clock, aging_health, birth, build_snapshot, death, events, learning, logging_and_hash,
+    mating, virus_spread,
 };
 use crate::{
     Config, EventIntake, EventLog, Gods, HashHistory, NextHumanId, PendingBirths, SimulationFaults,
@@ -277,6 +277,11 @@ pub fn build_headless_app(seed: u64, config: Config) -> App {
 
 pub fn step(app: &mut App) {
     app.world_mut().run_schedule(SimTick);
+}
+
+/// Returns the current canonical state without changing the simulation.
+pub fn snapshot(app: &mut App) -> anana_core::WorldSnapshot {
+    build_snapshot(app.world_mut())
 }
 
 #[cfg(test)]
