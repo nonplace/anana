@@ -38,7 +38,7 @@ cargo run --release -p anana -- --mode headless --offline --seed 42 --ticks 500
 That command currently prints one canonical line:
 
 ```text
-hash=b0eafb93d9b6428e70a4f73adca13cd599040c0d678687f027a58d3065f6d74a tick=500 living=134 births=96 deaths=42 infections=173 generation=1 lineages=61 lived=176 faults=0
+hash=207de206bea0287cb113d554b8e8834e9cc7bf5e1100e79d2dc2486813687a7a tick=500 living=138 births=100 deaths=42 infections=176 generation=1 lineages=62 lived=180 faults=0
 ```
 
 Prove determinism with two commands. The first compares two seed-42 runs; the
@@ -106,6 +106,12 @@ decay stops and experience compounds. The same rule reaches the interface and
 narrator: an amnesic human has no detailed remembered history to display or send
 to a mind.
 
+People also learn socially inside explicit residence groups. Observation passes
+through separate attention, retention, reproduction, and motivation stages;
+deliberate teaching works best at a moderate competence gap that widens as the
+learner improves. Unused experience follows a concave forgetting curve, while
+spaced retrieval builds stability and makes later relearning cheaper.
+
 ### A virus is the second lifeform
 
 The virus has its own incubation, infectious, and recovery phases. Infection
@@ -168,7 +174,7 @@ thread count, gosh replay, UI purity, offline-mind determinism, model-output
 validation, and CLI defaults. Model-client tests use canned JSON; no test contacts
 the API.
 
-Seven Given/When/Then feature files execute through `cucumber` as living,
+Eight Given/When/Then feature files execute through `cucumber` as living,
 non-technical documentation:
 
 | Feature | What it proves |
@@ -180,6 +186,7 @@ non-technical documentation:
 | `gosh.feature` | Divine influence is deterministic, permanent, recorded, and distinct from observation |
 | `determinism.feature` | Same seeds match, different seeds diverge, and recorded history replays |
 | `population.feature` | Fertile years, birth spacing, density dependence, death records, and many generations |
+| `social_learning.feature` | Lived experience, four-stage observation, targeted teaching, forgetting, spacing, and retrieval |
 
 For example, this documentation is executable:
 

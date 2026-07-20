@@ -1,6 +1,7 @@
 use anana_core::{
-    Body, Consciousness, HumanId, Instincts, LifeStage, Permille, Phenotype, RngDomain, SkillId,
-    Skills, apply_learning, min_awareness,
+    Body, Consciousness, HumanId, Instincts, LifeStage, ObservationFactors, Permille, Phenotype,
+    PracticeKind, Residence, RngDomain, SkillId, Skills, decay_unpractised, min_awareness,
+    observational_gain, practise_skill, teaching_gain,
 };
 use bevy::prelude::{Entity, Query, Res};
 
@@ -37,30 +38,103 @@ fn affinity(skill: SkillId, instincts: &Instincts) -> u8 {
     }
 }
 
+#[derive(Clone)]
+struct LearnerSnapshot {
+    id: HumanId,
+    body: Body,
+    instincts: Instincts,
+    consciousness: Consciousness,
+    skills: Skills,
+    residence: Residence,
+}
+
+type LearningQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static HumanId,
+        &'static Body,
+        &'static Instincts,
+        &'static Phenotype,
+        &'static mut Consciousness,
+        &'static mut Skills,
+        &'static Residence,
+    ),
+>;
+
+fn reproduction_factor(stage: LifeStage, competence: u16) -> Permille {
+    let stage_capacity = match stage {
+        LifeStage::Infant => 50_u16,
+        LifeStage::Child => 300,
+        LifeStage::Adolescent => 700,
+        LifeStage::Adult => 1000,
+        LifeStage::Elder => 800,
+    };
+    Permille(
+        stage_capacity
+            .saturating_add(competence.saturating_mul(2))
+            .min(1000),
+    )
+}
+
+fn observation_factors(
+    observer: &LearnerSnapshot,
+    model_competence: u16,
+    skill: SkillId,
+) -> ObservationFactors {
+    let observer_competence = u16::from(observer.skills.level_of(skill)).saturating_mul(20);
+    let attention = u16::from(observer.consciousness.focus.min(100))
+        .saturating_mul(5)
+        .saturating_add(u16::from(observer.consciousness.awareness.min(100)).saturating_mul(3))
+        .saturating_add(model_competence.saturating_mul(2))
+        .min(1000);
+    let can_retain = skill == SkillId::Recall || observer.skills.recall_learned();
+    let retention = if can_retain {
+        observer.consciousness.memory_capacity.min(1000)
+    } else {
+        0
+    };
+    let motivation = u16::from(affinity(skill, &observer.instincts).min(100))
+        .saturating_mul(7)
+        .saturating_add(observer_competence.saturating_mul(3))
+        .min(1000);
+    ObservationFactors {
+        attention: Permille(attention),
+        retention: Permille(retention),
+        reproduction: reproduction_factor(observer.body.life_stage, observer_competence),
+        motivation: Permille(motivation),
+    }
+}
+
 pub(crate) fn learning(
     clock: Res<'_, WorldClock>,
     rng: Res<'_, SimulationRng>,
-    mut humans: Query<
-        '_,
-        '_,
-        (
-            Entity,
-            &HumanId,
-            &Body,
-            &Instincts,
-            &Phenotype,
-            &mut Consciousness,
-            &mut Skills,
-        ),
-    >,
+    mut humans: LearningQuery<'_, '_>,
 ) {
-    let mut ordered = humans
+    let mut snapshots = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _)| (*id, entity))
+        .map(
+            |(_, id, body, instincts, _, consciousness, skills, residence)| LearnerSnapshot {
+                id: *id,
+                body: body.clone(),
+                instincts: instincts.clone(),
+                consciousness: consciousness.clone(),
+                skills: skills.clone(),
+                residence: *residence,
+            },
+        )
         .collect::<Vec<_>>();
-    ordered.sort_by_key(|(id, _)| *id);
-    for (id, entity) in ordered {
-        let Ok((_, _, body, instincts, phenotype, mut consciousness, mut skills)) =
+    snapshots.sort_by_key(|human| human.id);
+    let entities = humans
+        .iter_mut()
+        .map(|(entity, id, _, _, _, _, _, _)| (*id, entity))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for observer in &snapshots {
+        let Some(entity) = entities.get(&observer.id).copied() else {
+            continue;
+        };
+        let Ok((_, _, body, instincts, phenotype, mut consciousness, mut skills, _)) =
             humans.get_mut(entity)
         else {
             continue;
@@ -77,6 +151,7 @@ pub(crate) fn learning(
         } else if consciousness.focus > focus_cap {
             consciousness.focus = consciousness.focus.saturating_sub(1).max(focus_cap);
         }
+        decay_unpractised(&mut skills, clock.0);
         for (index, skill) in ORDERED_SKILLS.iter().copied().enumerate() {
             if consciousness.awareness < min_awareness(skill) {
                 continue;
@@ -88,11 +163,88 @@ pub(crate) fn learning(
             if rng.0.gate(
                 RngDomain::SkillGain,
                 clock.0,
-                id,
+                observer.id,
                 (index as u64).saturating_add(1),
                 probability,
             ) {
-                let _result = apply_learning(&mut skills, &consciousness, phenotype, skill, 20);
+                let _result = practise_skill(
+                    &mut skills,
+                    &consciousness,
+                    phenotype,
+                    skill,
+                    20,
+                    clock.0,
+                    PracticeKind::Restudy,
+                );
+            }
+            if clock.0.0.is_multiple_of(5) {
+                let observer_competence =
+                    u16::from(observer.skills.level_of(skill)).saturating_mul(20);
+                let model = snapshots
+                    .iter()
+                    .filter(|model| {
+                        model.id != observer.id
+                            && model.residence == observer.residence
+                            && model.body.alive
+                            && model.skills.level_of(skill) > observer.skills.level_of(skill)
+                    })
+                    .max_by_key(|model| {
+                        (model.skills.level_of(skill), std::cmp::Reverse(model.id))
+                    });
+                if let Some(model) = model {
+                    let model_competence =
+                        u16::from(model.skills.level_of(skill)).saturating_mul(20);
+                    let observed = observational_gain(
+                        20,
+                        model_competence,
+                        observer_competence,
+                        observation_factors(observer, model_competence, skill),
+                    );
+                    if observed > 0 {
+                        let _result = practise_skill(
+                            &mut skills,
+                            &consciousness,
+                            phenotype,
+                            skill,
+                            observed,
+                            clock.0,
+                            PracticeKind::Restudy,
+                        );
+                    }
+                }
+            }
+            if clock.0.0.is_multiple_of(10) {
+                let learner_competence =
+                    u16::from(observer.skills.level_of(skill)).saturating_mul(20);
+                let lesson = snapshots
+                    .iter()
+                    .filter(|teacher| {
+                        teacher.id != observer.id
+                            && teacher.residence == observer.residence
+                            && teacher.body.alive
+                    })
+                    .map(|teacher| {
+                        let teacher_competence =
+                            u16::from(teacher.skills.level_of(skill)).saturating_mul(20);
+                        (
+                            teaching_gain(learner_competence, teacher_competence, 30),
+                            std::cmp::Reverse(teacher.id),
+                        )
+                    })
+                    .max();
+                if let Some((gain, _)) = lesson
+                    && gain > 0
+                {
+                    let _result = practise_skill(
+                        &mut skills,
+                        &consciousness,
+                        phenotype,
+                        skill,
+                        gain,
+                        clock.0,
+                        PracticeKind::Retrieval,
+                    );
+                }
             }
         }
     }

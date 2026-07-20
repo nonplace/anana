@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Body, Consciousness, Genome, HumanId, Infection, Instincts, Lineage, Phenotype, Skills,
+    Body, Consciousness, Genome, HumanId, Infection, Instincts, Lineage, Phenotype, Residence,
+    Skills,
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -26,6 +27,7 @@ pub struct HumanState {
     pub body: Body,
     pub skills: Skills,
     pub lineage: Lineage,
+    pub residence: Residence,
     pub infection: Option<Infection>,
 }
 
@@ -84,6 +86,9 @@ pub(crate) fn fixture_human(id: HumanId) -> HumanState {
         },
         skills: Skills::default(),
         lineage: Lineage::new(id, None, None, 0, Tick(0)),
+        residence: Residence {
+            id: crate::ResidenceId(1),
+        },
         infection: None,
     }
 }

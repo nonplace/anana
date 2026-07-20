@@ -12,6 +12,7 @@ pub struct WorldSnapshot {
     pub seed: u64,
     pub tick: Tick,
     pub next_human_id: HumanId,
+    pub next_residence_id: crate::ResidenceId,
     pub humans: BTreeMap<HumanId, HumanState>,
     pub dead: BTreeMap<HumanId, DeadHuman>,
     pub viruses: BTreeMap<VirusId, Virus>,
@@ -44,6 +45,7 @@ struct CanonicalWorld<'a> {
     seed: u64,
     tick: Tick,
     next_human_id: HumanId,
+    next_residence_id: crate::ResidenceId,
     humans: &'a BTreeMap<HumanId, HumanState>,
     dead: &'a BTreeMap<HumanId, DeadHuman>,
     viruses: &'a BTreeMap<VirusId, Virus>,
@@ -60,6 +62,7 @@ pub fn world_hash_with_event_log_hash(
         seed: snapshot.seed,
         tick: snapshot.tick,
         next_human_id: snapshot.next_human_id,
+        next_residence_id: snapshot.next_residence_id,
         humans: &snapshot.humans,
         dead: &snapshot.dead,
         viruses: &snapshot.viruses,
@@ -105,6 +108,7 @@ mod tests {
             seed: 42,
             tick: Tick(17),
             next_human_id: HumanId(3),
+            next_residence_id: crate::ResidenceId(2),
             humans: BTreeMap::from([(HumanId(1), first), (HumanId(2), second)]),
             dead: BTreeMap::new(),
             viruses: BTreeMap::from([(
@@ -176,6 +180,9 @@ mod tests {
         changed.next_human_id.0 = changed.next_human_id.0.saturating_add(1);
         variants.push(changed);
         let mut changed = original.clone();
+        changed.next_residence_id.0 = changed.next_residence_id.0.saturating_add(1);
+        variants.push(changed);
+        let mut changed = original.clone();
         changed
             .humans
             .get_mut(&HumanId(1))
@@ -198,6 +205,29 @@ mod tests {
             .expect("fixture exists")
             .lineage
             .generation = 9;
+        variants.push(changed);
+        let mut changed = original.clone();
+        changed
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("fixture exists")
+            .residence
+            .id = crate::ResidenceId(8);
+        variants.push(changed);
+        let mut changed = original.clone();
+        changed
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("fixture exists")
+            .skills
+            .memories
+            .insert(
+                crate::SkillId::Motor,
+                crate::SkillMemory {
+                    stability: 10,
+                    ..crate::SkillMemory::default()
+                },
+            );
         variants.push(changed);
         let mut changed = original.clone();
         changed
@@ -255,8 +285,8 @@ mod tests {
         assert_eq!(
             world_hash(&snapshot()),
             [
-                124, 175, 140, 100, 118, 188, 6, 170, 77, 190, 191, 109, 220, 236, 120, 50, 120,
-                126, 98, 100, 145, 48, 135, 215, 164, 239, 98, 1, 204, 44, 37, 67,
+                241, 241, 11, 194, 109, 59, 110, 172, 252, 239, 220, 237, 61, 82, 100, 127, 98,
+                231, 108, 38, 218, 10, 168, 188, 5, 164, 180, 214, 122, 28, 4, 108,
             ]
         );
     }

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, mem, sync::Mutex};
 
 use anana_core::{
     DeadHuman, EventAuthor, EventOutcome, EventPayload, EventRecord, God, GodId, GoshKind,
-    GoshTarget, HumanId, Rng, Seq, Tick, Virus, VirusId, event_log_hash,
+    GoshTarget, HumanId, ResidenceId, Rng, Seq, Tick, Virus, VirusId, event_log_hash,
 };
 use bevy::prelude::Resource;
 use thiserror::Error;
@@ -15,6 +15,8 @@ pub enum SimError {
     HumanIdExhausted,
     #[error("the event sequence is exhausted")]
     EventSequenceExhausted,
+    #[error("the residence identifier allocator is exhausted")]
+    ResidenceIdExhausted,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Resource)]
@@ -62,6 +64,22 @@ impl NextHumanId {
         let next = self.0.0.checked_add(1).ok_or(SimError::HumanIdExhausted)?;
         let allocated = self.0;
         self.0 = HumanId(next);
+        Ok(allocated)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Resource)]
+pub struct NextResidenceId(pub ResidenceId);
+
+impl NextResidenceId {
+    pub fn allocate(&mut self) -> Result<ResidenceId, SimError> {
+        let next = self
+            .0
+            .0
+            .checked_add(1)
+            .ok_or(SimError::ResidenceIdExhausted)?;
+        let allocated = self.0;
+        self.0 = ResidenceId(next);
         Ok(allocated)
     }
 }
@@ -246,6 +264,16 @@ mod tests {
         assert_eq!(ids.allocate(), Ok(HumanId(8)));
         let mut exhausted = NextHumanId(HumanId(u64::MAX));
         assert_eq!(exhausted.allocate(), Err(SimError::HumanIdExhausted));
+    }
+
+    #[test]
+    fn residence_identifiers_allocate_monotonically_and_report_exhaustion() {
+        let mut ids = NextResidenceId(ResidenceId(4));
+        assert_eq!(ids.allocate(), Ok(ResidenceId(4)));
+        assert_eq!(ids.allocate(), Ok(ResidenceId(5)));
+        let mut exhausted = NextResidenceId(ResidenceId(u64::MAX));
+        assert_eq!(ids.0, ResidenceId(6));
+        assert_eq!(exhausted.allocate(), Err(SimError::ResidenceIdExhausted));
     }
 
     #[test]
