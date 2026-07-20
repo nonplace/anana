@@ -1,8 +1,9 @@
 use std::{collections::BTreeMap, mem, sync::Mutex};
 
 use anana_core::{
-    DeadHuman, EventAuthor, EventOutcome, EventPayload, EventRecord, God, GodId, GoshKind,
-    GoshTarget, HumanId, ResidenceId, Rng, Seq, Tick, Virus, VirusId, event_log_hash,
+    Coalition, CoalitionId, DeadHuman, EventAuthor, EventOutcome, EventPayload, EventRecord, God,
+    GodId, GoshKind, GoshTarget, HumanId, ResidenceId, Rng, Seq, Tick, Virus, VirusId,
+    event_log_hash,
 };
 use bevy::prelude::Resource;
 use thiserror::Error;
@@ -27,6 +28,7 @@ pub struct Config {
     pub birth_spacing_ticks: u64,
     pub mortality_interval: u64,
     pub requested_threads: usize,
+    pub social_capacity: usize,
     pub initial_virus: Virus,
 }
 
@@ -39,6 +41,7 @@ impl Default for Config {
             birth_spacing_ticks: 40,
             mortality_interval: 20,
             requested_threads: 1,
+            social_capacity: anana_core::DEFAULT_SOCIAL_CAPACITY,
             initial_virus: Virus {
                 id: VirusId(1),
                 spreadscore: 18,
@@ -245,6 +248,9 @@ pub struct Viruses(pub BTreeMap<VirusId, Virus>);
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
 pub struct Gods(pub BTreeMap<GodId, God>);
+
+#[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
+pub struct Coalitions(pub BTreeMap<CoalitionId, Coalition>);
 
 #[cfg(test)]
 mod tests {

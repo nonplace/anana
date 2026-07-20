@@ -8,8 +8,9 @@ use anana_core::{
 use bevy::prelude::World;
 
 use crate::{
-    DeadRegistry, EventDigest, EventLog, Gods, HashHistory, NextHumanId, NextResidenceId,
-    PopulationHistory, PopulationPoint, SimulationRng, SimulationStats, Viruses, WorldClock,
+    Coalitions, DeadRegistry, EventDigest, EventLog, Gods, HashHistory, NextHumanId,
+    NextResidenceId, PopulationHistory, PopulationPoint, SimulationRng, SimulationStats, Viruses,
+    WorldClock,
 };
 
 fn living_humans(world: &mut World) -> BTreeMap<HumanId, HumanState> {
@@ -74,6 +75,7 @@ fn snapshot_with_log(world: &mut World, include_log: bool) -> WorldSnapshot {
         dead: world.resource::<DeadRegistry>().0.clone(),
         viruses: world.resource::<Viruses>().0.clone(),
         gods: world.resource::<Gods>().0.clone(),
+        coalitions: world.resource::<Coalitions>().0.clone(),
         event_log: if include_log {
             world.resource::<EventLog>().records().to_vec()
         } else {

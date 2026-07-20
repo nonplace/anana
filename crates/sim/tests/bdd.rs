@@ -4,17 +4,19 @@
 //! the world actually does, and it runs as a test. If a scenario goes red, either
 //! the simulation broke or the description is out of date.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
     Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
-    EventPayload, GenePair, Genome, GoshKind, HandAllele, HumanId, Instincts, LifeStage, Lineage,
-    MateProfile, ObservationFactors, Permille, Phenotype, PolySublocus, PolygenicLocus,
-    PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
-    Skills, SocialBonds, Tick, Virus, VirusId, apply_learning, are_first_degree_relatives,
-    attraction_score, bond_is_courtship_ready, conceive, courtship_aversion_factor, decay_bond,
-    decay_unpractised, express, observational_gain, optimal_teaching_gap, p_infect, practise_skill,
-    record_defection, record_positive_interaction, teaching_gain,
+    EventPayload, GenePair, Genome, GoshKind, GroupResponse, HandAllele, HumanId, Instincts,
+    LifeStage, Lineage, MateProfile, ObservationFactors, Permille, Phenotype, PolySublocus,
+    PolygenicLocus, PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId,
+    SkillState, Skills, SocialBonds, SocialLayer, Tick, Virus, VirusId, apply_learning,
+    are_first_degree_relatives, attraction_score, bond_is_courtship_ready, coalition_cooperation,
+    conceive, courtship_aversion_factor, decay_bond, decay_unpractised, deference_value, express,
+    group_response, observational_gain, optimal_teaching_gap, p_infect, practise_skill,
+    prestige_of, record_defection, record_positive_interaction, relationship_layer, teaching_gain,
+    trim_to_social_capacity,
 };
 use anana_sim::{
     App, Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationStats, WorldClock,
@@ -58,6 +60,8 @@ pub struct AnanaWorld {
     bond_values: Vec<u16>,
     rearing_values: Vec<Permille>,
     related_pair: Option<(Lineage, Lineage)>,
+    prestige_values: Vec<u32>,
+    society_flags: Vec<bool>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -134,6 +138,129 @@ fn complete_observation() -> ObservationFactors {
         reproduction: Permille::ONE,
         motivation: Permille::ONE,
     }
+}
+
+#[given("two equally capable people but only one has been watched")]
+fn two_equal_people_only_one_observed(w: &mut AnanaWorld) {
+    w.prestige_values = vec![
+        u32::from(deference_value(800, 0).0),
+        u32::from(deference_value(0, 0).0),
+    ];
+}
+
+#[when("a neighbour decides where to confer respect")]
+fn a_neighbour_confers_respect(_w: &mut AnanaWorld) {}
+
+#[then("the observed person receives more standing and the obscure person may remain unknown")]
+fn observed_competence_receives_more_standing(w: &mut AnanaWorld) {
+    assert!(w.prestige_values[0] > w.prestige_values[1]);
+}
+
+#[given("a capable person has an early lead in freely given respect")]
+fn a_capable_person_has_an_early_lead(w: &mut AnanaWorld) {
+    let first = deference_value(600, 0);
+    let compounded = deference_value(600, u32::from(first.0));
+    let mut first_ledger = SocialBonds::default();
+    first_ledger.deference.insert(HumanId(9), first);
+    let mut second_ledger = SocialBonds::default();
+    second_ledger.deference.insert(HumanId(9), compounded);
+    let ledgers = BTreeMap::from([(HumanId(1), first_ledger), (HumanId(2), second_ledger)]);
+    let everyone = BTreeSet::from([HumanId(1), HumanId(2), HumanId(9)]);
+    let after_death = BTreeSet::from([HumanId(2), HumanId(9)]);
+    w.prestige_values = vec![
+        u32::from(first.0),
+        u32::from(compounded.0),
+        prestige_of(HumanId(9), &ledgers, &everyone),
+        prestige_of(HumanId(9), &ledgers, &after_death),
+    ];
+}
+
+#[when("neighbours use both competence and existing respect as clues")]
+fn neighbours_use_direct_and_social_cues(_w: &mut AnanaWorld) {}
+
+#[then("the lead grows and falls again when a follower is removed")]
+fn prestige_compounds_and_remains_revocable(w: &mut AnanaWorld) {
+    assert!(w.prestige_values[1] > w.prestige_values[0]);
+    assert!(w.prestige_values[3] < w.prestige_values[2]);
+}
+
+#[given("a maximally prestigious person and a neighbour who gave them nothing")]
+fn prestige_and_a_non_conferrer_are_prepared(w: &mut AnanaWorld) {
+    let untouched = SocialBonds::default();
+    let before = untouched.clone();
+    let mut conferrer = SocialBonds::default();
+    conferrer.deference.insert(HumanId(9), Permille::ONE);
+    let ledgers = BTreeMap::from([(HumanId(1), conferrer), (HumanId(2), untouched)]);
+    let living = BTreeSet::from([HumanId(1), HumanId(2), HumanId(9)]);
+    w.society_flags = vec![
+        prestige_of(HumanId(9), &ledgers, &living) == 1000,
+        ledgers[&HumanId(2)] == before,
+    ];
+}
+
+#[when("the prestigious person is considered by that neighbour")]
+fn the_prestigious_person_is_considered(_w: &mut AnanaWorld) {}
+
+#[then("the neighbour's body skills bonds and choices remain unchanged")]
+fn prestige_cannot_coerce(w: &mut AnanaWorld) {
+    assert!(w.society_flags.iter().all(|flag| *flag));
+}
+
+#[given("a close relationship and more acquaintances than one mind can maintain")]
+fn an_overfull_social_network_is_prepared(w: &mut AnanaWorld) {
+    let close = Bond {
+        strength: Permille::ONE,
+        last_interaction: Tick(1),
+        last_decay_tick: Tick(1),
+        positive_interactions: 20,
+        defections: 0,
+    };
+    let mut social = SocialBonds::default();
+    for id in 1..=170 {
+        social.bonds.insert(HumanId(id), close.clone());
+    }
+    trim_to_social_capacity(&mut social, 150);
+    w.society_flags = vec![
+        relationship_layer(0, &close, Tick(2)) == Some(SocialLayer::Support),
+        relationship_layer(0, &close, Tick(20)) == Some(SocialLayer::Affinity),
+        social.bonds.len() == 150,
+    ];
+}
+
+#[when("contact stops for long enough")]
+fn contact_stops_for_long_enough(_w: &mut AnanaWorld) {}
+
+#[then("the close relationship moves outward and nobody exceeds the social bound")]
+fn relationships_demote_and_remain_bounded(w: &mut AnanaWorld) {
+    assert!(w.society_flags.iter().all(|flag| *flag));
+}
+
+#[given("an oversized group with bonds and freely conferred standing")]
+fn an_oversized_group_state_is_prepared(w: &mut AnanaWorld) {
+    let members = BTreeSet::from([HumanId(1), HumanId(2), HumanId(3)]);
+    let flat = BTreeMap::from([(HumanId(1), 100), (HumanId(2), 100), (HumanId(3), 100)]);
+    let steep = BTreeMap::from([(HumanId(1), 290), (HumanId(2), 5), (HumanId(3), 5)]);
+    w.prestige_values = vec![
+        u32::from(coalition_cooperation(&members, &flat).0),
+        u32::from(coalition_cooperation(&members, &steep).0),
+    ];
+    w.society_flags = vec![
+        group_response(Permille(800), Permille(100)) == GroupResponse::Fission,
+        group_response(Permille(400), Permille(800)) == GroupResponse::Stratify,
+    ];
+}
+
+#[when("its members can no longer maintain one uniform network")]
+fn the_group_exceeds_what_members_can_maintain(_w: &mut AnanaWorld) {}
+
+#[then("a flat connected group splits while a steep group grows mediators")]
+fn group_state_selects_fission_or_structure(w: &mut AnanaWorld) {
+    assert!(w.society_flags.iter().all(|flag| *flag));
+}
+
+#[then("concentrated standing supports less cooperation than flat standing")]
+fn concentrated_prestige_reduces_cooperation(w: &mut AnanaWorld) {
+    assert!(w.prestige_values[1] < w.prestige_values[0]);
 }
 
 #[given("two strangers begin sharing positive experiences")]

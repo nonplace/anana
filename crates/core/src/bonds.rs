@@ -76,6 +76,8 @@ impl RearingAversion {
 pub struct SocialBonds {
     pub bonds: BTreeMap<HumanId, Bond>,
     pub rearing_aversions: BTreeMap<HumanId, RearingAversion>,
+    pub observed_competence: BTreeMap<HumanId, u16>,
+    pub deference: BTreeMap<HumanId, Permille>,
 }
 
 fn integer_sqrt(value: u32) -> u32 {

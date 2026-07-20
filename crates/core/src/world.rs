@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DeadHuman, EventRecord, God, GodId, HumanId, HumanState, Tick, Virus, VirusId};
+use crate::{
+    Coalition, CoalitionId, DeadHuman, EventRecord, God, GodId, HumanId, HumanState, Tick, Virus,
+    VirusId,
+};
 
 const EVENT_LOG_DOMAIN: &[u8] = b"anana-event-log-v2";
 const WORLD_DOMAIN: &[u8] = b"anana-world-v2";
@@ -17,6 +20,7 @@ pub struct WorldSnapshot {
     pub dead: BTreeMap<HumanId, DeadHuman>,
     pub viruses: BTreeMap<VirusId, Virus>,
     pub gods: BTreeMap<GodId, God>,
+    pub coalitions: BTreeMap<CoalitionId, Coalition>,
     pub event_log: Vec<EventRecord>,
 }
 
@@ -50,6 +54,7 @@ struct CanonicalWorld<'a> {
     dead: &'a BTreeMap<HumanId, DeadHuman>,
     viruses: &'a BTreeMap<VirusId, Virus>,
     gods: &'a BTreeMap<GodId, God>,
+    coalitions: &'a BTreeMap<CoalitionId, Coalition>,
     event_log_hash: [u8; 32],
 }
 
@@ -67,6 +72,7 @@ pub fn world_hash_with_event_log_hash(
         dead: &snapshot.dead,
         viruses: &snapshot.viruses,
         gods: &snapshot.gods,
+        coalitions: &snapshot.coalitions,
         event_log_hash,
     };
     match postcard::to_allocvec(&canonical) {
@@ -89,7 +95,7 @@ pub fn world_hash(snapshot: &WorldSnapshot) -> [u8; 32] {
 mod tests {
     //! Canonical snapshots hash every world section independent of map insertion order and pin serialization drift.
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
     use crate::{
@@ -128,6 +134,7 @@ mod tests {
                     goshes_spoken: 3,
                 },
             )]),
+            coalitions: BTreeMap::new(),
             event_log: vec![EventRecord {
                 tick: Tick(16),
                 seq: Seq(4),
@@ -261,6 +268,18 @@ mod tests {
         );
         variants.push(changed);
 
+        let mut changed = original.clone();
+        changed.coalitions.insert(
+            crate::CoalitionId(1),
+            crate::Coalition {
+                id: crate::CoalitionId(1),
+                members: BTreeSet::from([HumanId(1), HumanId(2)]),
+                stratified: false,
+                mediators: BTreeSet::new(),
+            },
+        );
+        variants.push(changed);
+
         assert!(
             variants
                 .iter()
@@ -285,8 +304,8 @@ mod tests {
         assert_eq!(
             world_hash(&snapshot()),
             [
-                171, 91, 49, 71, 35, 53, 26, 0, 152, 122, 108, 190, 202, 13, 195, 24, 137, 134,
-                154, 80, 170, 240, 53, 237, 28, 98, 14, 80, 245, 222, 32, 73,
+                143, 181, 243, 80, 161, 8, 80, 137, 195, 2, 115, 41, 78, 47, 230, 156, 116, 50,
+                199, 184, 216, 27, 207, 189, 138, 161, 127, 171, 71, 210, 23, 173,
             ]
         );
     }

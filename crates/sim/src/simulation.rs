@@ -17,9 +17,9 @@ use crate::systems::{
     mating, virus_spread,
 };
 use crate::{
-    Config, DeadRegistry, EventDigest, EventIntake, EventLog, Gods, HashHistory, NextHumanId,
-    NextResidenceId, PendingBirths, PopulationHistory, SimulationFaults, SimulationRng,
-    SimulationStats, Viruses, WorldClock,
+    Coalitions, Config, DeadRegistry, EventDigest, EventIntake, EventLog, Gods, HashHistory,
+    NextHumanId, NextResidenceId, PendingBirths, PopulationHistory, SimulationFaults,
+    SimulationRng, SimulationStats, Viruses, WorldClock,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
@@ -77,6 +77,7 @@ impl Plugin for SimPlugin {
                     goshes_spoken: 0,
                 },
             )])))
+            .insert_resource(Coalitions::default())
             .init_schedule(SimTick)
             .configure_sets(
                 SimTick,
