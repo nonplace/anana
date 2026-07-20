@@ -432,6 +432,7 @@ mod tests {
                     goshes_spoken: 0,
                 },
             )]),
+            coalitions: BTreeMap::new(),
             event_log: vec![
                 record(1, 0, HumanId(1)),
                 record(2, 1, HumanId(2)),

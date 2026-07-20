@@ -148,6 +148,7 @@ mod tests {
                         goshes_spoken: 0,
                     },
                 )]),
+                coalitions: BTreeMap::new(),
                 event_log: vec![record],
             },
             StatusCounters {

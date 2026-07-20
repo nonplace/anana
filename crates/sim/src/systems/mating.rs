@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anana_core::{
     Body, Consciousness, HumanId, Instincts, Lineage, MateProfile, Permille, Phenotype, RngDomain,
     Sex, SkillId, Skills, SocialBonds, Tick, are_first_degree_relatives, attraction_score,
-    courtship_aversion_factor, mutual_courtship_is_ready,
+    courtship_aversion_factor, mutual_courtship_is_ready, prestige_of,
 };
 use bevy::prelude::{Query, Res, ResMut};
 
@@ -214,6 +214,15 @@ pub(crate) fn mating(
         .iter()
         .filter(|(_, _, body, _, _, _, _, _)| body.alive)
         .count() as u32;
+    let living_ids = humans
+        .iter()
+        .filter(|(_, _, body, _, _, _, _, _)| body.alive)
+        .map(|(id, _, _, _, _, _, _, _)| *id)
+        .collect::<BTreeSet<_>>();
+    let ledgers = humans
+        .iter()
+        .map(|(id, _, _, _, _, _, _, social)| (*id, social.clone()))
+        .collect::<BTreeMap<_, _>>();
     let mut candidates = humans
         .iter()
         .filter(|(_, _, body, _, _, _, _, _)| {
@@ -221,6 +230,14 @@ pub(crate) fn mating(
         })
         .map(
             |(id, phenotype, body, instincts, consciousness, skills, lineage, social_bonds)| {
+                let mut profile = mate_profile(body, phenotype, instincts, consciousness, skills);
+                let prestige_desirability = prestige_of(*id, &ledgers, &living_ids)
+                    .saturating_div(50)
+                    .min(30) as u8;
+                profile.desirability = profile
+                    .desirability
+                    .saturating_add(prestige_desirability)
+                    .min(100);
                 Candidate {
                     id: *id,
                     sex: phenotype.sex,
@@ -228,7 +245,7 @@ pub(crate) fn mating(
                     reproduction: instincts.reproduction.min(100),
                     last_birth_tick: lineage.last_birth_tick,
                     lineage: lineage.clone(),
-                    profile: mate_profile(body, phenotype, instincts, consciousness, skills),
+                    profile,
                     social_bonds: social_bonds.clone(),
                 }
             },
