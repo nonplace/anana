@@ -168,8 +168,8 @@ fn founder_age(index: u32, lifespan_ticks: u32) -> u32 {
         0 => 400_u32,
         1 => 500,
         2 => 800,
-        3 => 250,
-        _ => 100,
+        3 => 300,
+        _ => 150,
     };
     lifespan_ticks.saturating_mul(elapsed_permille) / 1000
 }
