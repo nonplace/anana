@@ -24,6 +24,11 @@ pub struct Narrative {
     pub epitaph: String,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GoshForm {
+    pub draft: GoshKind,
+}
+
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub snapshot: WorldSnapshot,
@@ -31,7 +36,7 @@ pub struct AppState {
     pub feed_scroll: u16,
     pub feed_selected_only: bool,
     pub focus: Panel,
-    pub pending_gosh: Option<GoshKind>,
+    pub gosh_form: Option<GoshForm>,
     pub narrative: Option<Narrative>,
     pub counters: StatusCounters,
     pub paused: bool,
@@ -48,7 +53,7 @@ impl AppState {
             feed_scroll: 0,
             feed_selected_only: false,
             focus: Panel::World,
-            pending_gosh: None,
+            gosh_form: None,
             narrative: None,
             counters,
             paused: false,

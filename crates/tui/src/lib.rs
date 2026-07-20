@@ -1,9 +1,11 @@
 //! Terminal presentation layer for AnanA.
 
 mod app_state;
+mod input;
 mod widgets;
 
 pub use app_state::*;
+pub use input::*;
 pub use widgets::render;
 
 #[cfg(test)]
@@ -13,12 +15,17 @@ mod tests {
     use std::collections::BTreeMap;
 
     use anana_core::{
-        Body, Consciousness, DeterministicKind, DiseaseAllele, EventAuthor, EventOutcome,
-        EventPayload, EventRecord, EyeAllele, GenePair, Genome, God, GodId, HandAllele, HumanId,
-        HumanState, Instincts, Lineage, Permille, PolySublocus, PolygenicLocus, Rng, Seq,
-        SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId, WorldSnapshot, express,
+        Bane, Body, Consciousness, DeterministicKind, DiseaseAllele, EventAuthor, EventOutcome,
+        EventPayload, EventRecord, EyeAllele, GenePair, Genome, God, GodId, GoshKind, GoshTarget,
+        HandAllele, HumanId, HumanState, Instincts, Lineage, Permille, PolySublocus,
+        PolygenicLocus, Rng, Seq, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId,
+        WorldSnapshot, express,
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        crossterm::event::{KeyCode, KeyEvent},
+    };
 
     use super::*;
 
@@ -184,5 +191,88 @@ mod tests {
     fn rendering_the_same_presentation_state_twice_produces_identical_buffers() {
         let state = state(true);
         assert_eq!(rendered(&state), rendered(&state));
+    }
+
+    #[test]
+    fn navigation_and_scrolling_return_view_intents_and_never_cast_a_gosh() {
+        let mut state = state(true);
+        let selected = handle_key(
+            &mut state,
+            KeyEvent::new(
+                KeyCode::Right,
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
+        let scrolled = handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Down, ratatui::crossterm::event::KeyModifiers::NONE),
+        );
+        assert_eq!(selected, UiIntent::Select(HumanId(2)));
+        assert_eq!(scrolled, UiIntent::ScrollFeed(1));
+        assert!(!matches!(selected, UiIntent::CastGosh(_)));
+        assert!(!matches!(scrolled, UiIntent::CastGosh(_)));
+    }
+
+    #[test]
+    fn confirming_a_completed_gosh_form_returns_exactly_the_decree_that_was_built() {
+        let mut state = state(true);
+        assert_eq!(
+            handle_key(
+                &mut state,
+                KeyEvent::new(
+                    KeyCode::Char('g'),
+                    ratatui::crossterm::event::KeyModifiers::NONE
+                )
+            ),
+            UiIntent::None
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(
+                KeyCode::Char('a'),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
+        handle_key(
+            &mut state,
+            KeyEvent::new(
+                KeyCode::Char('+'),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
+        assert_eq!(
+            handle_key(
+                &mut state,
+                KeyEvent::new(
+                    KeyCode::Enter,
+                    ratatui::crossterm::event::KeyModifiers::NONE
+                )
+            ),
+            UiIntent::CastGosh(GoshKind::Afflict {
+                target: GoshTarget::One(HumanId(1)),
+                bane: Bane::Harm(15),
+            })
+        );
+        assert!(state.gosh_form.is_none());
+    }
+
+    #[test]
+    fn escaping_a_gosh_form_cancels_it_without_returning_a_decree() {
+        let mut state = state(true);
+        handle_key(
+            &mut state,
+            KeyEvent::new(
+                KeyCode::Char('g'),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
+        assert_eq!(
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Esc, ratatui::crossterm::event::KeyModifiers::NONE)
+            ),
+            UiIntent::None
+        );
+        assert!(state.gosh_form.is_none());
     }
 }
