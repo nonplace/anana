@@ -235,9 +235,11 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
     if !clock.0.0.is_multiple_of(10) {
         return;
     }
-    let subject_ids = snapshot_humans(&mut humans)
-        .into_iter()
+    let canonical = snapshot_humans(&mut humans);
+    let subject_ids = canonical
+        .iter()
         .filter_map(|(id, human)| human.body.alive.then_some(id))
+        .copied()
         .collect::<Vec<_>>();
     for subject in subject_ids {
         let seq = match log.next_seq() {
@@ -247,7 +249,6 @@ pub(crate) fn events(params: EventParams<'_, '_>) {
                 continue;
             }
         };
-        let canonical = snapshot_humans(&mut humans);
         let subjects = [subject];
         let view = WorldView {
             humans: &canonical,

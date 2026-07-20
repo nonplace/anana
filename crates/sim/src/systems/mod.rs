@@ -10,6 +10,7 @@ mod virus_spread;
 
 pub(crate) use advance_clock::advance_clock;
 pub(crate) use aging_health::aging_health;
+pub(crate) use aging_health::fertility_for_age;
 pub(crate) use birth::birth;
 pub(crate) use death::death;
 pub(crate) use events::events;

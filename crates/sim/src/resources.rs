@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, mem, sync::Mutex};
 
 use anana_core::{
-    EventAuthor, EventOutcome, EventPayload, EventRecord, God, GodId, GoshKind, GoshTarget,
-    HumanId, Rng, Seq, Tick, Virus, VirusId,
+    DeadHuman, EventAuthor, EventOutcome, EventPayload, EventRecord, God, GodId, GoshKind,
+    GoshTarget, HumanId, Rng, Seq, Tick, Virus, VirusId, event_log_hash,
 };
 use bevy::prelude::Resource;
 use thiserror::Error;
@@ -20,8 +20,10 @@ pub enum SimError {
 #[derive(Clone, PartialEq, Eq, Debug, Resource)]
 pub struct Config {
     pub initial_population: u32,
-    pub max_population: u32,
+    pub carrying_capacity: u32,
     pub mating_interval: u64,
+    pub birth_spacing_ticks: u64,
+    pub mortality_interval: u64,
     pub requested_threads: usize,
     pub initial_virus: Virus,
 }
@@ -29,14 +31,16 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            initial_population: 5,
-            max_population: 64,
+            initial_population: 80,
+            carrying_capacity: 300,
             mating_interval: 10,
+            birth_spacing_ticks: 40,
+            mortality_interval: 20,
             requested_threads: 1,
             initial_virus: Virus {
                 id: VirusId(1),
-                spreadscore: 38,
-                virulence: 12,
+                spreadscore: 18,
+                virulence: 2,
                 incubation_ticks: 8,
                 mutation_rate: anana_core::Permille(3),
             },
@@ -177,6 +181,8 @@ pub struct SimulationStats {
     pub deaths: u64,
     pub infections: u64,
     pub living: u64,
+    pub deepest_generation: u32,
+    pub surviving_founder_lineages: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
@@ -184,6 +190,37 @@ pub struct SimulationFaults(pub Vec<SimError>);
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
 pub struct HashHistory(pub Vec<[u8; 32]>);
+
+#[derive(Clone, PartialEq, Eq, Debug, Resource)]
+pub struct EventDigest {
+    pub hash: [u8; 32],
+    pub records_hashed: usize,
+}
+
+impl Default for EventDigest {
+    fn default() -> Self {
+        Self {
+            hash: event_log_hash(&[]),
+            records_hashed: 0,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
+pub struct DeadRegistry(pub BTreeMap<HumanId, DeadHuman>);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PopulationPoint {
+    pub tick: Tick,
+    pub living: u64,
+    pub births: u64,
+    pub deaths: u64,
+    pub deepest_generation: u32,
+    pub surviving_founder_lineages: u32,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
+pub struct PopulationHistory(pub Vec<PopulationPoint>);
 
 #[derive(Clone, PartialEq, Eq, Debug, Default, Resource)]
 pub struct Viruses(pub BTreeMap<VirusId, Virus>);

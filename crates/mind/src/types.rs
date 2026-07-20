@@ -397,6 +397,7 @@ mod tests {
                 (HumanId(2), human(HumanId(2), true)),
                 (HumanId(1), human(HumanId(1), false)),
             ]),
+            dead: BTreeMap::new(),
             viruses: BTreeMap::from([
                 (
                     VirusId(2),

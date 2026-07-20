@@ -7,6 +7,16 @@ use crate::{
 };
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub struct DeadHuman {
+    pub id: HumanId,
+    pub lineage: Lineage,
+    pub generation: u32,
+    pub birth_tick: crate::Tick,
+    pub death_tick: crate::Tick,
+    pub skills: Skills,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct HumanState {
     pub id: HumanId,
     pub genome: Genome,

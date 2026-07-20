@@ -16,8 +16,9 @@ use crate::systems::{
     mating, virus_spread,
 };
 use crate::{
-    Config, EventIntake, EventLog, Gods, HashHistory, NextHumanId, PendingBirths, SimulationFaults,
-    SimulationRng, SimulationStats, Viruses, WorldClock,
+    Config, DeadRegistry, EventDigest, EventIntake, EventLog, Gods, HashHistory, NextHumanId,
+    PendingBirths, PopulationHistory, SimulationFaults, SimulationRng, SimulationStats, Viruses,
+    WorldClock,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, ScheduleLabel)]
@@ -55,8 +56,11 @@ impl Plugin for SimPlugin {
             .insert_resource(SimulationRng(Rng::new(self.seed)))
             .insert_resource(NextHumanId(HumanId(1)))
             .insert_resource(EventLog::default())
+            .insert_resource(EventDigest::default())
             .insert_resource(EventIntake::default())
             .insert_resource(PendingBirths::default())
+            .insert_resource(DeadRegistry::default())
+            .insert_resource(PopulationHistory::default())
             .insert_resource(SimulationStats::default())
             .insert_resource(SimulationFaults::default())
             .insert_resource(HashHistory::default())
@@ -163,23 +167,15 @@ fn founder_genome(index: u32) -> Genome {
     }
 }
 
-fn founder_age(index: u32, lifespan_ticks: u32) -> u32 {
-    let elapsed_permille = match index % 5 {
-        0 => 400_u32,
-        1 => 500,
-        2 => 800,
-        3 => 300,
-        _ => 150,
-    };
-    lifespan_ticks.saturating_mul(elapsed_permille) / 1000
-}
-
-fn founder_fertility(stage: LifeStage) -> u8 {
-    match stage {
-        LifeStage::Adolescent => 35,
-        LifeStage::Adult => 80,
-        LifeStage::Infant | LifeStage::Child | LifeStage::Elder => 0,
-    }
+fn founder_age(index: u32, count: u32, lifespan_ticks: u32) -> u32 {
+    let rank = u64::from(index.saturating_add(1));
+    let count = u64::from(count.max(1));
+    let elapsed_permille =
+        rank.saturating_mul(rank).saturating_mul(900) / count.saturating_mul(count);
+    u64::from(lifespan_ticks)
+        .saturating_mul(elapsed_permille)
+        .saturating_div(1000)
+        .min(u64::from(u32::MAX)) as u32
 }
 
 fn founder_consciousness(stage: LifeStage) -> Consciousness {
@@ -229,9 +225,10 @@ fn seed_founders(app: &mut App) {
         let genome = founder_genome(index);
         let phenotype = express(&genome, &seed, Tick(0), id);
         let mut body = Body::at_birth(&phenotype);
-        body.age_ticks = founder_age(index, phenotype.lifespan_ticks);
+        body.age_ticks = founder_age(index, count, phenotype.lifespan_ticks);
         body.life_stage = Body::life_stage_for(body.age_ticks, phenotype.lifespan_ticks);
-        body.fertility = founder_fertility(body.life_stage);
+        body.fertility =
+            crate::systems::fertility_for_age(body.age_ticks, phenotype.lifespan_ticks);
         if body.life_stage == LifeStage::Elder {
             body.health /= 2;
         }
@@ -264,7 +261,9 @@ fn seed_founders(app: &mut App) {
             });
         }
     }
-    app.world_mut().resource_mut::<SimulationStats>().living = u64::from(count);
+    let stats = &mut *app.world_mut().resource_mut::<SimulationStats>();
+    stats.living = u64::from(count);
+    stats.surviving_founder_lineages = count;
 }
 
 pub fn build_headless_app(seed: u64, config: Config) -> App {
@@ -391,10 +390,11 @@ mod tests {
             step(app);
         }
         let records = first.world().resource::<EventLog>().records();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0].author, EventAuthor::God);
-        assert_eq!(records[0].tick.0, 0);
-        assert_eq!(records[0].seq.0, 0);
+        let gosh = records
+            .iter()
+            .find(|record| record.author == EventAuthor::God)
+            .expect("the captured gosh is recorded among same-tick world events");
+        assert_eq!(gosh.tick.0, 0);
         assert_eq!(
             first.world().resource::<HashHistory>().0,
             second.world().resource::<HashHistory>().0

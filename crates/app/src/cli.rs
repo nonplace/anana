@@ -19,10 +19,10 @@ pub(crate) struct Cli {
     pub mode: RunMode,
     #[arg(long)]
     pub offline: bool,
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 80)]
     pub initial_population: u32,
-    #[arg(long, default_value_t = 64)]
-    pub max_population: u32,
+    #[arg(long, alias = "max-population", default_value_t = 300)]
+    pub carrying_capacity: u32,
     #[arg(long, default_value_t = 10)]
     pub mating_interval: u64,
 }
@@ -31,7 +31,7 @@ impl Cli {
     pub(crate) fn simulation_config(&self) -> Config {
         Config {
             initial_population: self.initial_population,
-            max_population: self.max_population,
+            carrying_capacity: self.carrying_capacity,
             mating_interval: self.mating_interval,
             ..Config::default()
         }

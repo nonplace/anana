@@ -48,7 +48,7 @@ pub fn express(genome: &Genome, rng: &Rng, tick: Tick, id: HumanId) -> Phenotype
         aptitude,
         base_max_health: 80_u16.saturating_add(u16::from(robustness).saturating_mul(5)),
         learning_rate: Permille(500_u16.saturating_add(u16::from(aptitude).saturating_mul(50))),
-        lifespan_ticks: 18_000_u32.saturating_add(u32::from(robustness).saturating_mul(1_000)),
+        lifespan_ticks: 2_000_u32.saturating_add(u32::from(robustness).saturating_mul(100)),
     }
 }
 
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!((low.robustness, low.aptitude), (0, 0));
         assert_eq!(
             (low.base_max_health, low.learning_rate.0, low.lifespan_ticks),
-            (80, 500, 18_000)
+            (80, 500, 2_000)
         );
 
         let mut high_genome = genome();
@@ -194,7 +194,7 @@ mod tests {
                 high.learning_rate.0,
                 high.lifespan_ticks
             ),
-            (120, 900, 26_000)
+            (120, 900, 2_800)
         );
     }
 
@@ -216,7 +216,7 @@ mod tests {
                 phenotype.learning_rate.0,
                 phenotype.lifespan_ticks
             ),
-            (120, 900, 26_000)
+            (120, 900, 2_800)
         );
     }
 }

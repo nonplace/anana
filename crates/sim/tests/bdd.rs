@@ -7,10 +7,10 @@
 use std::collections::BTreeMap;
 
 use anana_core::{
-    Body, Boon, Consciousness, CoreError, DiseaseAllele, EventAuthor, GenePair, Genome, GoshKind,
-    HandAllele, HumanId, Instincts, LifeStage, Lineage, Permille, Phenotype, PolySublocus,
-    PolygenicLocus, Rng, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId,
-    apply_learning, conceive, express, p_infect,
+    Body, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
+    EventPayload, GenePair, Genome, GoshKind, HandAllele, HumanId, Instincts, LifeStage, Lineage,
+    Permille, Phenotype, PolySublocus, PolygenicLocus, Rng, SexAllele, SkillId, SkillState, Skills,
+    Tick, Virus, VirusId, apply_learning, conceive, express, p_infect,
 };
 use anana_sim::{
     App, Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationStats, WorldClock,
@@ -45,6 +45,10 @@ pub struct AnanaWorld {
     second_healing: u16,
     history_before: usize,
     original_hashes: Vec<[u8; 32]>,
+    birth_ticks: Vec<Tick>,
+    open_births: u64,
+    crowded_births: u64,
+    dead_subject: Option<HumanId>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -170,10 +174,223 @@ fn cast_healing(app: &App, subject: HumanId) {
         .expect("the scenario event intake is available");
 }
 
+fn spawn_scenario_human(app: &mut App, id: HumanId, female: bool, age_permille: u32) {
+    let genome = known_genome(female, false);
+    let phenotype = express(&genome, &Rng::new(42), Tick(0), id);
+    let mut body = Body::at_birth(&phenotype);
+    body.age_ticks = phenotype.lifespan_ticks.saturating_mul(age_permille) / 1000;
+    body.life_stage = Body::life_stage_for(body.age_ticks, phenotype.lifespan_ticks);
+    body.fertility = if (200..700).contains(&age_permille) {
+        100
+    } else {
+        0
+    };
+    let mut skills = Skills::default();
+    skills.levels.insert(
+        SkillId::Recall,
+        SkillState {
+            xp: 100,
+            learned: true,
+        },
+    );
+    app.world_mut().spawn((
+        id,
+        genome,
+        phenotype,
+        Instincts {
+            survival: 90,
+            reproduction: 100,
+            hunger: 50,
+            fear: 40,
+            social: 80,
+        },
+        Consciousness {
+            awareness: 80,
+            focus: 80,
+            memory_capacity: 900,
+        },
+        body,
+        skills,
+        Lineage::new(id, None, None, 0, Tick(0)),
+    ));
+}
+
+fn couple_world(extra_children: u64) -> App {
+    let mut app = build_headless_app(
+        42,
+        Config {
+            initial_population: 0,
+            carrying_capacity: 20,
+            initial_virus: virus(0),
+            ..Config::default()
+        },
+    );
+    spawn_scenario_human(&mut app, HumanId(1), true, 400);
+    spawn_scenario_human(&mut app, HumanId(2), false, 400);
+    for offset in 0..extra_children {
+        spawn_scenario_human(&mut app, HumanId(3 + offset), offset.is_multiple_of(2), 0);
+    }
+    app.world_mut().resource_mut::<NextHumanId>().0 = HumanId(3 + extra_children);
+    app.world_mut().resource_mut::<SimulationStats>().living = 2 + extra_children;
+    app
+}
+
+fn compact_spec_config() -> Config {
+    Config {
+        initial_population: 5,
+        carrying_capacity: 32,
+        ..Config::default()
+    }
+}
+
+#[given("a healthy fertile couple in an otherwise empty world")]
+fn a_healthy_fertile_couple_in_an_empty_world(w: &mut AnanaWorld) {
+    w.app = Some(couple_world(0));
+}
+
+#[when("their world advances through several chances to conceive")]
+fn their_world_advances_through_several_chances_to_conceive(w: &mut AnanaWorld) {
+    let app = w.app.as_mut().expect("a fertile world was prepared");
+    for _ in 0..240 {
+        step(app);
+    }
+    w.birth_ticks = app
+        .world()
+        .resource::<EventLog>()
+        .records()
+        .iter()
+        .filter(|record| {
+            record.subjects.len() == 3
+                && matches!(
+                    record.payload,
+                    EventPayload::Deterministic(DeterministicKind::Maturation)
+                )
+        })
+        .map(|record| record.tick)
+        .collect();
+}
+
+#[then("their children are born with recovery time between births")]
+fn their_children_are_spaced_apart(w: &mut AnanaWorld) {
+    assert!(w.birth_ticks.len() >= 2, "births={:?}", w.birth_ticks);
+    assert!(w.birth_ticks.windows(2).all(|pair| {
+        pair.get(1)
+            .zip(pair.first())
+            .is_some_and(|(later, earlier)| later.0.saturating_sub(earlier.0) >= 40)
+    }));
+}
+
+#[given("two equally fertile worlds, one open and one nearly full")]
+fn two_equally_fertile_worlds_with_different_crowding(w: &mut AnanaWorld) {
+    w.app = Some(couple_world(0));
+    w.other = Some(couple_world(14));
+}
+
+#[when("both worlds reach a chance to conceive")]
+fn both_worlds_reach_chances_to_conceive(w: &mut AnanaWorld) {
+    let open = w.app.as_mut().expect("an open world was prepared");
+    let crowded = w.other.as_mut().expect("a crowded world was prepared");
+    for _ in 0..400 {
+        step(open);
+        step(crowded);
+    }
+    w.open_births = open.world().resource::<SimulationStats>().births;
+    w.crowded_births = crowded.world().resource::<SimulationStats>().births;
+}
+
+#[then("the nearly full world has fewer births without forbidding them at a wall")]
+fn crowding_dampens_births_without_a_hard_wall(w: &mut AnanaWorld) {
+    assert!(w.crowded_births > 0);
+    assert!(
+        w.crowded_births < w.open_births,
+        "open={}, crowded={}",
+        w.open_births,
+        w.crowded_births
+    );
+}
+
+#[given("a living human whose life is about to end")]
+fn a_living_human_near_the_end_of_life(w: &mut AnanaWorld) {
+    let mut app = build_headless_app(
+        42,
+        Config {
+            initial_population: 0,
+            carrying_capacity: 1,
+            initial_virus: virus(0),
+            ..Config::default()
+        },
+    );
+    let subject = HumanId(1);
+    spawn_scenario_human(&mut app, subject, false, 999);
+    app.world_mut().resource_mut::<NextHumanId>().0 = HumanId(2);
+    app.world_mut().resource_mut::<SimulationStats>().living = 1;
+    w.dead_subject = Some(subject);
+    w.app = Some(app);
+}
+
+#[when("the world advances beyond that life")]
+fn the_world_advances_beyond_that_life(w: &mut AnanaWorld) {
+    let app = w
+        .app
+        .as_mut()
+        .expect("a nearly completed life was prepared");
+    for _ in 0..10 {
+        step(app);
+    }
+}
+
+#[then("the human is gone from the living population")]
+fn the_dead_human_is_no_longer_living(w: &mut AnanaWorld) {
+    let subject = w.dead_subject.expect("a dying human was prepared");
+    let app = w.app.as_mut().expect("a running world was prepared");
+    assert!(!snapshot(app).humans.contains_key(&subject));
+}
+
+#[then("their lineage and learned skills remain in the world's memory")]
+fn the_dead_humans_lineage_and_skills_remain(w: &mut AnanaWorld) {
+    let subject = w.dead_subject.expect("a dying human was prepared");
+    let app = w.app.as_mut().expect("a running world was prepared");
+    let world = snapshot(app);
+    let remembered = world
+        .dead
+        .get(&subject)
+        .expect("the dead human is remembered");
+    assert_eq!(remembered.lineage.id, subject);
+    assert!(remembered.skills.recall_learned());
+}
+
+#[given(expr = "a new society seeded with {int}")]
+fn a_new_society_seeded_with(w: &mut AnanaWorld, seed: u64) {
+    w.seed = seed;
+    w.app = Some(build_headless_app(seed, Config::default()));
+}
+
+#[when(expr = "the society lives through {int} ticks")]
+fn the_society_lives_through_ticks(w: &mut AnanaWorld, ticks: u64) {
+    let app = w.app.as_mut().expect("a society was prepared");
+    for _ in 0..ticks {
+        step(app);
+    }
+}
+
+#[then("hundreds of people remain alive within the world's carrying capacity")]
+fn hundreds_remain_within_capacity(w: &mut AnanaWorld) {
+    let app = w.app.as_ref().expect("a society was prepared");
+    let living = app.world().resource::<SimulationStats>().living;
+    assert!((200..=300).contains(&living), "living={living}");
+}
+
+#[then("the society has reached at least five generations")]
+fn society_reaches_several_generations(w: &mut AnanaWorld) {
+    let app = w.app.as_ref().expect("a society was prepared");
+    let generation = app.world().resource::<SimulationStats>().deepest_generation;
+    assert!(generation >= 5, "generation={generation}");
+}
+
 #[given(expr = "a new world seeded with {int}")]
 fn a_new_world(w: &mut AnanaWorld, seed: u64) {
     w.seed = seed;
-    let mut app = build_headless_app(seed, Config::default());
+    let mut app = build_headless_app(seed, compact_spec_config());
     w.ages_before = age_map(&mut app);
     w.stages_before = stage_map(&mut app);
     w.app = Some(app);
@@ -228,11 +445,8 @@ fn at_least_one_human_reached_a_later_stage(w: &mut AnanaWorld) {
     let app = w.app.as_mut().expect("a running world was prepared");
     let now = stage_map(app);
     assert!(
-        now.iter().any(|(id, stage)| {
-            w.stages_before
-                .get(id)
-                .is_some_and(|before| stage_rank(*stage) > stage_rank(*before))
-        }),
+        now.values()
+            .any(|stage| stage_rank(*stage) > stage_rank(LifeStage::Infant)),
         "before={:?}, now={now:?}",
         w.stages_before
     );
@@ -338,7 +552,7 @@ fn a_newborn_with_expressed_traits(w: &mut AnanaWorld) {
     w.seed = 42;
     let config = Config {
         initial_population: 0,
-        max_population: 1,
+        carrying_capacity: 1,
         ..Config::default()
     };
     let mut app = build_headless_app(w.seed, config);
@@ -558,7 +772,7 @@ fn more_contagious_is_not_less_likely(w: &mut AnanaWorld) {
 #[given("a running world with an injured human")]
 fn a_running_world_with_an_injured_human(w: &mut AnanaWorld) {
     w.seed = 42;
-    let mut app = build_headless_app(w.seed, Config::default());
+    let mut app = build_headless_app(w.seed, compact_spec_config());
     let subject = HumanId(2);
     w.health_before = injure(&mut app, subject, 20);
     w.selected = Some(subject);
@@ -576,7 +790,7 @@ fn a_running_world_with_a_blessed_human(w: &mut AnanaWorld) {
 
 #[given("a running world")]
 fn a_running_world(w: &mut AnanaWorld) {
-    w.app = Some(build_headless_app(42, Config::default()));
+    w.app = Some(build_headless_app(42, compact_spec_config()));
     w.selected = Some(HumanId(2));
     w.history_before = 0;
 }
@@ -592,7 +806,7 @@ fn the_god_blesses_with_healing(w: &mut AnanaWorld) {
 #[when("the same blessing is spoken in two worlds started from different seeds")]
 fn the_same_blessing_is_spoken_in_different_worlds(w: &mut AnanaWorld) {
     let subject = w.selected.expect("an injured human was selected");
-    let mut other = build_headless_app(999, Config::default());
+    let mut other = build_headless_app(999, compact_spec_config());
     let other_before = injure(&mut other, subject, 20);
     let first = w.app.as_mut().expect("the first world was prepared");
     cast_healing(first, subject);
@@ -652,15 +866,15 @@ fn the_history_is_unchanged(w: &mut AnanaWorld) {
 #[given(expr = "two worlds both seeded with {int}")]
 fn two_worlds_with_the_same_seed(w: &mut AnanaWorld, seed: u64) {
     w.seed = seed;
-    w.app = Some(build_headless_app(seed, Config::default()));
-    w.other = Some(build_headless_app(seed, Config::default()));
+    w.app = Some(build_headless_app(seed, compact_spec_config()));
+    w.other = Some(build_headless_app(seed, compact_spec_config()));
 }
 
 #[given(expr = "a world seeded with {int} and another seeded with {int}")]
 fn two_worlds_with_different_seeds(w: &mut AnanaWorld, first: u64, second: u64) {
     w.seed = first;
-    w.app = Some(build_headless_app(first, Config::default()));
-    w.other = Some(build_headless_app(second, Config::default()));
+    w.app = Some(build_headless_app(first, compact_spec_config()));
+    w.other = Some(build_headless_app(second, compact_spec_config()));
 }
 
 #[when(expr = "both worlds advance {int} ticks")]
@@ -712,7 +926,7 @@ fn both_worlds_have_diverged(w: &mut AnanaWorld) {
 #[given("a world that has run 100 ticks and recorded its history")]
 fn a_world_with_recorded_history(w: &mut AnanaWorld) {
     w.seed = 42;
-    let mut app = build_headless_app(w.seed, Config::default());
+    let mut app = build_headless_app(w.seed, compact_spec_config());
     for _ in 0..100 {
         step(&mut app);
     }
@@ -730,7 +944,7 @@ fn that_history_is_replayed(w: &mut AnanaWorld) {
         .resource::<EventLog>()
         .records()
         .to_vec();
-    w.replayed = Some(replay(w.seed, Config::default(), records));
+    w.replayed = Some(replay(w.seed, compact_spec_config(), records));
 }
 
 #[then("the replayed world matches the original exactly")]
