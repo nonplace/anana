@@ -27,23 +27,26 @@ async fn main() -> Result<()> {
     let config = cli.simulation_config();
     match cli.mode {
         RunMode::Live => run_live(cli.seed, config, cli.ticks, &select_mind(cli.offline)).await,
-        RunMode::Replay => run_replay(cli.seed, config, cli.ticks.unwrap_or(100)),
+        RunMode::Replay => run_replay(cli.seed, config, cli.ticks.unwrap_or(5_000)),
         RunMode::Headless => {
             let result = run_headless(
                 cli.seed,
                 config,
-                cli.ticks.unwrap_or(100),
+                cli.ticks.unwrap_or(5_000),
                 &select_mind(cli.offline),
             )
             .await?;
             println!(
-                "hash={} tick={} living={} births={} deaths={} infections={} faults={}",
+                "hash={} tick={} living={} births={} deaths={} infections={} generation={} lineages={} lived={} faults={}",
                 hash_hex(result.final_hash),
                 result.tick,
                 result.stats.living,
                 result.stats.births,
                 result.stats.deaths,
                 result.stats.infections,
+                result.stats.deepest_generation,
+                result.stats.surviving_founder_lineages,
+                result.stats.living.saturating_add(result.stats.deaths),
                 result.faults.len(),
             );
             Ok(())
@@ -73,7 +76,7 @@ mod tests {
             "--offline",
             "--initial-population",
             "7",
-            "--max-population",
+            "--carrying-capacity",
             "70",
             "--mating-interval",
             "12",
@@ -86,7 +89,7 @@ mod tests {
         assert_eq!(
             (
                 cli.initial_population,
-                cli.max_population,
+                cli.carrying_capacity,
                 cli.mating_interval
             ),
             (7, 70, 12)
@@ -101,7 +104,7 @@ mod tests {
         assert_eq!(cli.mode, RunMode::Live);
         assert_eq!(cli.ticks, None);
         assert_eq!(cli.initial_population, defaults.initial_population);
-        assert_eq!(cli.max_population, defaults.max_population);
+        assert_eq!(cli.carrying_capacity, defaults.carrying_capacity);
         assert_eq!(cli.mating_interval, defaults.mating_interval);
     }
 
@@ -123,8 +126,8 @@ mod tests {
         assert_eq!(
             first.final_hash,
             [
-                30, 151, 146, 226, 53, 9, 6, 208, 193, 124, 122, 39, 71, 143, 96, 79, 16, 9, 198,
-                151, 171, 10, 174, 250, 184, 206, 178, 73, 150, 137, 118, 126,
+                111, 165, 67, 236, 86, 55, 99, 181, 70, 252, 100, 95, 149, 201, 201, 135, 85, 95,
+                20, 57, 89, 171, 145, 170, 180, 49, 81, 162, 88, 40, 205, 241,
             ]
         );
     }

@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{EventRecord, God, GodId, HumanId, HumanState, Tick, Virus, VirusId};
+use crate::{DeadHuman, EventRecord, God, GodId, HumanId, HumanState, Tick, Virus, VirusId};
+
+const EVENT_LOG_DOMAIN: &[u8] = b"anana-event-log-v2";
+const WORLD_DOMAIN: &[u8] = b"anana-world-v2";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct WorldSnapshot {
@@ -10,17 +13,73 @@ pub struct WorldSnapshot {
     pub tick: Tick,
     pub next_human_id: HumanId,
     pub humans: BTreeMap<HumanId, HumanState>,
+    pub dead: BTreeMap<HumanId, DeadHuman>,
     pub viruses: BTreeMap<VirusId, Virus>,
     pub gods: BTreeMap<GodId, God>,
     pub event_log: Vec<EventRecord>,
 }
 
 #[must_use]
-pub fn world_hash(snapshot: &WorldSnapshot) -> [u8; 32] {
-    match postcard::to_allocvec(snapshot) {
-        Ok(bytes) => *blake3::hash(&bytes).as_bytes(),
+pub fn event_log_hash(records: &[EventRecord]) -> [u8; 32] {
+    extend_event_log_hash(*blake3::hash(EVENT_LOG_DOMAIN).as_bytes(), records)
+}
+
+#[must_use]
+pub fn extend_event_log_hash(mut previous: [u8; 32], records: &[EventRecord]) -> [u8; 32] {
+    for record in records {
+        let Ok(bytes) = postcard::to_allocvec(record) else {
+            return [0; 32];
+        };
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(EVENT_LOG_DOMAIN);
+        hasher.update(&previous);
+        hasher.update(&bytes);
+        previous = *hasher.finalize().as_bytes();
+    }
+    previous
+}
+
+#[derive(Serialize)]
+struct CanonicalWorld<'a> {
+    seed: u64,
+    tick: Tick,
+    next_human_id: HumanId,
+    humans: &'a BTreeMap<HumanId, HumanState>,
+    dead: &'a BTreeMap<HumanId, DeadHuman>,
+    viruses: &'a BTreeMap<VirusId, Virus>,
+    gods: &'a BTreeMap<GodId, God>,
+    event_log_hash: [u8; 32],
+}
+
+#[must_use]
+pub fn world_hash_with_event_log_hash(
+    snapshot: &WorldSnapshot,
+    event_log_hash: [u8; 32],
+) -> [u8; 32] {
+    let canonical = CanonicalWorld {
+        seed: snapshot.seed,
+        tick: snapshot.tick,
+        next_human_id: snapshot.next_human_id,
+        humans: &snapshot.humans,
+        dead: &snapshot.dead,
+        viruses: &snapshot.viruses,
+        gods: &snapshot.gods,
+        event_log_hash,
+    };
+    match postcard::to_allocvec(&canonical) {
+        Ok(bytes) => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(WORLD_DOMAIN);
+            hasher.update(&bytes);
+            *hasher.finalize().as_bytes()
+        }
         Err(_) => [0; 32],
     }
+}
+
+#[must_use]
+pub fn world_hash(snapshot: &WorldSnapshot) -> [u8; 32] {
+    world_hash_with_event_log_hash(snapshot, event_log_hash(&snapshot.event_log))
 }
 
 #[cfg(test)]
@@ -47,6 +106,7 @@ mod tests {
             tick: Tick(17),
             next_human_id: HumanId(3),
             humans: BTreeMap::from([(HumanId(1), first), (HumanId(2), second)]),
+            dead: BTreeMap::new(),
             viruses: BTreeMap::from([(
                 VirusId(1),
                 Virus {
@@ -77,10 +137,12 @@ mod tests {
     }
 
     #[test]
-    fn the_world_hash_is_blake3_over_the_exact_postcard_bytes_and_stable_across_a_clone() {
+    fn the_world_hash_composes_canonical_state_and_log_and_is_stable_across_a_clone() {
         let snapshot = snapshot();
-        let bytes = postcard::to_allocvec(&snapshot).expect("snapshot serializes");
-        assert_eq!(world_hash(&snapshot), *blake3::hash(&bytes).as_bytes());
+        assert_eq!(
+            world_hash(&snapshot),
+            world_hash_with_event_log_hash(&snapshot, event_log_hash(&snapshot.event_log))
+        );
         assert_eq!(world_hash(&snapshot), world_hash(&snapshot.clone()));
     }
 
@@ -155,6 +217,20 @@ mod tests {
         changed.event_log[0].narration = Some(String::from("a different telling"));
         variants.push(changed);
 
+        let mut changed = original.clone();
+        changed.dead.insert(
+            HumanId(9),
+            crate::DeadHuman {
+                id: HumanId(9),
+                lineage: crate::Lineage::new(HumanId(9), None, None, 0, Tick(0)),
+                generation: 0,
+                birth_tick: Tick(0),
+                death_tick: Tick(12),
+                skills: crate::Skills::default(),
+            },
+        );
+        variants.push(changed);
+
         assert!(
             variants
                 .iter()
@@ -163,12 +239,24 @@ mod tests {
     }
 
     #[test]
+    fn extending_the_event_digest_matches_hashing_the_complete_log() {
+        let snapshot = snapshot();
+        let first = event_log_hash(&snapshot.event_log[..0]);
+        let extended = extend_event_log_hash(first, &snapshot.event_log);
+        assert_eq!(extended, event_log_hash(&snapshot.event_log));
+        assert_eq!(
+            world_hash_with_event_log_hash(&snapshot, extended),
+            world_hash(&snapshot)
+        );
+    }
+
+    #[test]
     fn the_fully_populated_world_matches_the_pinned_golden_hash() {
         assert_eq!(
             world_hash(&snapshot()),
             [
-                249, 26, 90, 102, 98, 22, 214, 126, 195, 136, 66, 218, 217, 221, 66, 50, 90, 6,
-                144, 142, 95, 187, 30, 25, 38, 82, 214, 245, 23, 66, 124, 118,
+                124, 175, 140, 100, 118, 188, 6, 170, 77, 190, 191, 109, 220, 236, 120, 50, 120,
+                126, 98, 100, 145, 48, 135, 215, 164, 239, 98, 1, 204, 44, 37, 67,
             ]
         );
     }

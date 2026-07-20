@@ -128,6 +128,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
         );
         if let Ok((_, _, _, _, mut lineage)) = humans.get_mut(mother.entity) {
             lineage.children.push(child_id);
+            lineage.last_birth_tick = Some(clock.0);
         }
         if let Ok((_, _, _, _, mut lineage)) = humans.get_mut(father.entity) {
             lineage.children.push(child_id);

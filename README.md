@@ -38,7 +38,7 @@ cargo run --release -p anana -- --mode headless --offline --seed 42 --ticks 500
 That command currently prints one canonical line:
 
 ```text
-hash=3c06bbb28bab57cbc7f066c728c816b5c612d1a035c611deec27a57fb87f0372 tick=500 living=6 births=3 deaths=2 infections=7 faults=0
+hash=b0eafb93d9b6428e70a4f73adca13cd599040c0d678687f027a58d3065f6d74a tick=500 living=134 births=96 deaths=42 infections=173 generation=1 lineages=61 lived=176 faults=0
 ```
 
 Prove determinism with two commands. The first compares two seed-42 runs; the
@@ -57,17 +57,17 @@ create the founders and initial virus; the tick loop produces the rest.
 
 ```text
 anana [--seed <SEED>] [--ticks <TICKS>] [--mode <live|replay|headless>] [--offline]
-      [--initial-population <N>] [--max-population <N>] [--mating-interval <N>]
+      [--initial-population <N>] [--carrying-capacity <N>] [--mating-interval <N>]
 ```
 
 | Flag | Meaning | Default |
 |---|---|---|
 | `--seed <u64>` | Master seed from which keyed draws are derived | `42` |
-| `--ticks <u64>` | Tick limit | until quit in live mode; `100` in replay and headless modes |
+| `--ticks <u64>` | Tick limit | until quit in live mode; `5000` in replay and headless modes |
 | `--mode <live\|replay\|headless>` | Dashboard, in-process replay scrubber, or one-line headless run | `live` |
 | `--offline` | Force the deterministic, network-free mind | off; also used automatically when no API key is available |
-| `--initial-population <u32>` | Founder population | `5` |
-| `--max-population <u32>` | Population ceiling | `64` |
+| `--initial-population <u32>` | Founder population | `80` |
+| `--carrying-capacity <u32>` | Population level that smoothly damps births | `300` |
 | `--mating-interval <u64>` | Ticks between mating phases | `10` |
 
 Replay mode runs a world from the requested seed, rebuilds it from its recorded
@@ -137,11 +137,13 @@ Four constraints make that practical:
   systems and are re-derived rather than logged individually. Raw random values
   are not stored: replay re-derives them from the recorded keys.
 
-After every tick, the living world, viruses, gods, and event log are serialized
-canonically with `postcard` and hashed with BLAKE3. Tests compare the complete
-per-tick hash history, not only the final state. Golden regression tests also pin
-one keyed draw and one fully populated world hash, making dependency-stream or
-serialization-layout changes fail loudly.
+After every tick, canonical state is serialized with `postcard` and hashed with
+BLAKE3. The event-log digest extends only with records added during that tick,
+then composes with the state hash, so long histories remain linear rather than
+re-hashing their entire past. Tests compare the complete per-tick hash history,
+not only the final state. Golden regression tests also pin one keyed draw and one
+fully populated world hash, making dependency-stream or serialization-layout
+changes fail loudly.
 
 ## Tests and executable specifications
 
@@ -166,7 +168,7 @@ thread count, gosh replay, UI purity, offline-mind determinism, model-output
 validation, and CLI defaults. Model-client tests use canned JSON; no test contacts
 the API.
 
-Six Given/When/Then feature files execute through `cucumber` as living,
+Seven Given/When/Then feature files execute through `cucumber` as living,
 non-technical documentation:
 
 | Feature | What it proves |
@@ -177,6 +179,7 @@ non-technical documentation:
 | `virus_spread.feature` | Dormant never infects, full contagiousness always does, and probability is monotonic |
 | `gosh.feature` | Divine influence is deterministic, permanent, recorded, and distinct from observation |
 | `determinism.feature` | Same seeds match, different seeds diverge, and recorded history replays |
+| `population.feature` | Fertile years, birth spacing, density dependence, death records, and many generations |
 
 For example, this documentation is executable:
 

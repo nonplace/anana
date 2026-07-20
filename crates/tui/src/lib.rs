@@ -125,6 +125,7 @@ mod tests {
                     (HumanId(1), human(HumanId(1), recall)),
                     (HumanId(2), human(HumanId(2), true)),
                 ]),
+                dead: BTreeMap::new(),
                 viruses: BTreeMap::from([(
                     VirusId(1),
                     Virus {

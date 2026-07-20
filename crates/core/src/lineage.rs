@@ -11,6 +11,7 @@ pub struct Lineage {
     pub generation: u32,
     pub birth_tick: Tick,
     pub children: Vec<HumanId>,
+    pub last_birth_tick: Option<Tick>,
 }
 
 impl Lineage {
@@ -29,6 +30,7 @@ impl Lineage {
             generation,
             birth_tick,
             children: Vec::new(),
+            last_birth_tick: None,
         }
     }
 }
@@ -50,6 +52,7 @@ mod tests {
         );
         assert_eq!((lineage.generation, lineage.birth_tick), (2, Tick(40)));
         assert!(lineage.children.is_empty());
+        assert_eq!(lineage.last_birth_tick, None);
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub enum RngDomain {
     Infection = 5,
     Mutation = 6,
     Event = 7,
+    Mortality = 8,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
