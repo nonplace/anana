@@ -7,20 +7,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
-    Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele, EventAuthor,
-    EventPayload, GenePair, Genome, GoshKind, GroupResponse, HandAllele, HumanId, Instincts,
-    LifeStage, Lineage, MateProfile, ObservationFactors, Permille, Phenotype, PolySublocus,
-    PolygenicLocus, PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId,
-    SkillState, Skills, SocialBonds, SocialLayer, Tick, Virus, VirusId, apply_learning,
-    are_first_degree_relatives, attraction_score, bond_is_courtship_ready, coalition_cooperation,
-    conceive, courtship_aversion_factor, decay_bond, decay_unpractised, deference_value, express,
-    group_response, observational_gain, optimal_teaching_gap, p_infect, practise_skill,
-    prestige_of, record_defection, record_positive_interaction, relationship_layer, teaching_gain,
-    trim_to_social_capacity,
+    Bane, Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele,
+    EventAuthor, EventPayload, GenePair, Genome, GoshKind, GoshTarget, GroupResponse, HandAllele,
+    HumanId, Instincts, LifeStage, Lineage, MateProfile, ObservationFactors, Permille, Phenotype,
+    PolySublocus, PolygenicLocus, PracticeKind, RearingAversion, Residence, ResidenceId, Rng,
+    SexAllele, SkillId, SkillState, Skills, SocialBonds, SocialLayer, Tick, Virus, VirusId,
+    apply_learning, are_first_degree_relatives, attraction_score, bond_is_courtship_ready,
+    coalition_cooperation, conceive, courtship_aversion_factor, decay_bond, decay_unpractised,
+    deference_value, express, group_response, observational_gain, optimal_teaching_gap, p_infect,
+    practise_skill, prestige_of, record_defection, record_positive_interaction, relationship_layer,
+    teaching_gain, trim_to_social_capacity,
 };
 use anana_sim::{
-    App, Config, EventIntake, EventLog, HashHistory, NextHumanId, SimulationStats, WorldClock,
-    build_headless_app, replay, snapshot, step,
+    App, Config, CounterfactualComparison, CounterfactualDifferences, EventIntake, EventLog,
+    HashHistory, IndividualFate, NextHumanId, PendingBirth, PendingBirths, SimulationStats,
+    WorldClock, build_headless_app, project_counterfactual, replay, snapshot, step,
 };
 use cucumber::{World as _, given, then, when};
 
@@ -62,6 +63,10 @@ pub struct AnanaWorld {
     related_pair: Option<(Lineage, Lineage)>,
     prestige_values: Vec<u32>,
     society_flags: Vec<bool>,
+    counterfactual: Option<CounterfactualComparison>,
+    counterfactual_bytes: Vec<u8>,
+    straight_hash: Option<[u8; 32]>,
+    branch_family: BTreeSet<HumanId>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -1418,6 +1423,194 @@ fn the_replayed_world_matches(w: &mut AnanaWorld) {
             .resource::<HashHistory>()
             .0,
         w.original_hashes
+    );
+}
+
+#[given("a world reaches a chosen branch point")]
+fn a_world_reaches_a_chosen_branch_point(w: &mut AnanaWorld) {
+    w.seed = 42;
+    let mut app = build_headless_app(w.seed, compact_spec_config());
+    for _ in 0..40 {
+        step(&mut app);
+    }
+    w.app = Some(app);
+}
+
+#[when("its future is projected without a decree")]
+fn its_future_is_projected_without_a_decree(w: &mut AnanaWorld) {
+    w.counterfactual = Some(
+        project_counterfactual(w.app.as_mut().expect("the branch world exists"), 120, None)
+            .expect("the silent projection succeeds"),
+    );
+}
+
+#[then("the two futures have no differences")]
+fn the_two_futures_have_no_differences(w: &mut AnanaWorld) {
+    let comparison = w.counterfactual.as_ref().expect("the future was projected");
+    assert_eq!(comparison.differences, CounterfactualDifferences::default());
+    assert_eq!(
+        comparison.untouched.world_hash,
+        comparison.decreed.world_hash
+    );
+}
+
+#[when("one future receives a deadly decree")]
+fn one_future_receives_a_deadly_decree(w: &mut AnanaWorld) {
+    let app = w.app.as_mut().expect("the branch world exists");
+    let subject = snapshot(app)
+        .humans
+        .keys()
+        .next()
+        .copied()
+        .expect("someone is alive at the split");
+    w.counterfactual = Some(
+        project_counterfactual(
+            app,
+            120,
+            Some(GoshKind::Afflict {
+                target: GoshTarget::One(subject),
+                bane: Bane::Harm(u16::MAX),
+            }),
+        )
+        .expect("the deadly projection succeeds"),
+    );
+    for _ in 40..120 {
+        step(app);
+    }
+    w.straight_hash = app.world().resource::<HashHistory>().0.last().copied();
+}
+
+#[then("the untouched future matches a world that never branched")]
+fn the_untouched_future_matches_a_world_that_never_branched(w: &mut AnanaWorld) {
+    assert_eq!(
+        w.counterfactual
+            .as_ref()
+            .expect("the future was projected")
+            .untouched
+            .world_hash,
+        w.straight_hash
+            .expect("the straight world reached the horizon")
+    );
+}
+
+#[given("a living family exists at a branch point")]
+fn a_living_family_exists_at_a_branch_point(w: &mut AnanaWorld) {
+    let mut app = couple_world(0);
+    for _ in 0..2 {
+        app.world_mut()
+            .resource_mut::<PendingBirths>()
+            .0
+            .push(PendingBirth {
+                mother: HumanId(1),
+                father: HumanId(2),
+            });
+        step(&mut app);
+    }
+    let current = snapshot(&mut app);
+    let mut pending = vec![HumanId(1)];
+    let mut family = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !family.insert(id) {
+            continue;
+        }
+        if let Some(human) = current.humans.get(&id) {
+            pending.extend(human.lineage.children.iter().copied());
+        }
+    }
+    w.branch_family = family;
+    w.app = Some(app);
+}
+
+#[when("a decree ends that entire family line")]
+fn a_decree_ends_that_entire_family_line(w: &mut AnanaWorld) {
+    let branch_tick = w
+        .app
+        .as_ref()
+        .expect("the family world exists")
+        .world()
+        .resource::<WorldClock>()
+        .0
+        .0;
+    w.counterfactual = Some(
+        project_counterfactual(
+            w.app.as_mut().expect("the family world exists"),
+            branch_tick.saturating_add(1),
+            Some(GoshKind::Afflict {
+                target: GoshTarget::Lineage(HumanId(1)),
+                bane: Bane::Harm(u16::MAX),
+            }),
+        )
+        .expect("the lineage projection succeeds"),
+    );
+}
+
+#[then("that person and every descendant present at the split are gone from the changed future")]
+fn that_person_and_every_descendant_are_gone(w: &mut AnanaWorld) {
+    let differences = &w
+        .counterfactual
+        .as_ref()
+        .expect("the lineage future was projected")
+        .differences
+        .branch_individuals;
+    assert!(w.branch_family.len() > 1);
+    assert!(w.branch_family.iter().all(|id| {
+        differences.iter().any(|difference| {
+            difference.human == *id && matches!(difference.decreed, IndividualFate::Died { .. })
+        })
+    }));
+}
+
+#[then("that founding line survives only in the untouched future")]
+fn that_founding_line_survives_only_in_the_untouched_future(w: &mut AnanaWorld) {
+    assert!(
+        w.counterfactual
+            .as_ref()
+            .expect("the lineage future was projected")
+            .differences
+            .lineages
+            .only_untouched
+            .contains(&HumanId(1))
+    );
+}
+
+#[given("a seed, branch world, decree, and horizon")]
+fn a_seed_branch_world_decree_and_horizon(w: &mut AnanaWorld) {
+    a_world_reaches_a_chosen_branch_point(w);
+}
+
+#[when("that counterfactual is projected twice")]
+fn that_counterfactual_is_projected_twice(w: &mut AnanaWorld) {
+    let decree = Some(GoshKind::Afflict {
+        target: GoshTarget::One(HumanId(1)),
+        bane: Bane::Harm(u16::MAX),
+    });
+    let first = project_counterfactual(
+        w.app.as_mut().expect("the branch world exists"),
+        120,
+        decree.clone(),
+    )
+    .expect("the first projection succeeds");
+    w.counterfactual_bytes = serde_json::to_vec(&first).expect("the first comparison serializes");
+    w.counterfactual = Some(
+        project_counterfactual(
+            w.app.as_mut().expect("the unchanged branch world exists"),
+            120,
+            decree,
+        )
+        .expect("the second projection succeeds"),
+    );
+}
+
+#[then("both comparisons are byte for byte identical")]
+fn both_comparisons_are_byte_for_byte_identical(w: &mut AnanaWorld) {
+    assert_eq!(
+        serde_json::to_vec(
+            w.counterfactual
+                .as_ref()
+                .expect("the second projection exists")
+        )
+        .expect("the second comparison serializes"),
+        w.counterfactual_bytes
     );
 }
 
