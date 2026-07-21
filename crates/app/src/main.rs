@@ -3,10 +3,10 @@ mod driver;
 mod terminal;
 
 use anana_mind::{AnyMind, GptMind, OfflineMind};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 
-use cli::{Cli, RunMode};
+use cli::{Cli, Command, CounterfactualArgs, RunMode};
 use driver::{hash_hex, run_headless, run_live, run_replay};
 
 fn select_mind(force_offline: bool) -> AnyMind {
@@ -21,9 +21,36 @@ fn select_mind(force_offline: bool) -> AnyMind {
     }
 }
 
+fn run_counterfactual_command(args: CounterfactualArgs) -> Result<()> {
+    let decree = serde_json::from_str::<Option<anana_sim::GoshKind>>(&args.gosh)
+        .context("--gosh must be the canonical JSON form of a gosh, or null")?;
+    if !args.json {
+        eprintln!(
+            "Running seed {} to branch tick {}, then projecting both futures to tick {}...",
+            args.seed, args.branch_at, args.horizon
+        );
+    }
+    let comparison = anana_sim::run_counterfactual(anana_sim::CounterfactualRequest {
+        seed: args.seed,
+        config: args.simulation_config(),
+        branch_at: args.branch_at,
+        horizon: args.horizon,
+        decree,
+    })?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&comparison)?);
+    } else {
+        println!("{comparison}");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Counterfactual(args)) = cli.command.clone() {
+        return run_counterfactual_command(args);
+    }
     let config = cli.simulation_config();
     match cli.mode {
         RunMode::Live => run_live(cli.seed, config, cli.ticks, &select_mind(cli.offline)).await,
@@ -83,6 +110,7 @@ mod tests {
         ])
         .expect("the documented arguments parse");
         assert_eq!(cli.seed, 99);
+        assert!(cli.command.is_none());
         assert_eq!(cli.ticks, Some(20));
         assert_eq!(cli.mode, RunMode::Replay);
         assert!(cli.offline);
@@ -101,6 +129,7 @@ mod tests {
         let cli = Cli::try_parse_from(["anana"]).expect("bare invocation parses");
         let defaults = anana_sim::Config::default();
         assert_eq!(cli.seed, 42);
+        assert!(cli.command.is_none());
         assert_eq!(cli.mode, RunMode::Live);
         assert_eq!(cli.ticks, None);
         assert_eq!(cli.initial_population, defaults.initial_population);
@@ -111,6 +140,37 @@ mod tests {
     #[test]
     fn an_unknown_mode_is_rejected_instead_of_guessed() {
         assert!(Cli::try_parse_from(["anana", "--mode", "dream"]).is_err());
+    }
+
+    #[test]
+    fn the_counterfactual_subcommand_accepts_the_canonical_gosh_object() {
+        let cli = Cli::try_parse_from([
+            "anana",
+            "counterfactual",
+            "--seed",
+            "42",
+            "--branch-at",
+            "40",
+            "--horizon",
+            "120",
+            "--gosh",
+            r#"{"Afflict":{"target":{"One":12},"bane":{"Harm":65535}}}"#,
+            "--json",
+        ])
+        .expect("the documented counterfactual invocation parses");
+        let Some(Command::Counterfactual(args)) = cli.command else {
+            panic!("the counterfactual command is retained");
+        };
+        assert_eq!((args.seed, args.branch_at, args.horizon), (42, 40, 120));
+        assert!(args.json);
+        assert_eq!(
+            serde_json::from_str::<Option<anana_sim::GoshKind>>(&args.gosh)
+                .expect("the canonical gosh parses"),
+            Some(anana_sim::GoshKind::Afflict {
+                target: anana_sim::GoshTarget::One(anana_sim::HumanId(12)),
+                bane: anana_sim::Bane::Harm(u16::MAX),
+            })
+        );
     }
 
     #[tokio::test]

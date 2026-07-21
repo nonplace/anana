@@ -283,10 +283,15 @@ fn seed_founders(app: &mut App) {
         ResidenceId(u64::from(count.saturating_add(24) / 25).saturating_add(1));
 }
 
-pub fn build_headless_app(seed: u64, config: Config) -> App {
+pub(crate) fn build_empty_app(seed: u64, config: Config) -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_once()))
         .add_plugins(SimPlugin::new(seed, config));
+    app
+}
+
+pub fn build_headless_app(seed: u64, config: Config) -> App {
+    let mut app = build_empty_app(seed, config);
     seed_founders(&mut app);
     app
 }

@@ -94,6 +94,17 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    pub(crate) fn from_records(records: Vec<EventRecord>) -> Result<Self, SimError> {
+        let next_seq = records.last().map_or(Ok(0), |record| {
+            record
+                .seq
+                .0
+                .checked_add(1)
+                .ok_or(SimError::EventSequenceExhausted)
+        })?;
+        Ok(Self { records, next_seq })
+    }
+
     #[must_use]
     pub fn records(&self) -> &[EventRecord] {
         &self.records

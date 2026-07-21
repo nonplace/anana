@@ -8,10 +8,12 @@ license.workspace = true
 [dependencies]
 anana-core = { workspace = true, features = ["ecs"] }
 bevy.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 cucumber.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 
 [[test]]
