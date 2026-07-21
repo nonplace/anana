@@ -1,7 +1,34 @@
 use crate::{
     DiseaseAllele, DiseaseStatus, EyeAllele, EyeColor, Genome, HandAllele, Handedness, HumanId,
-    Permille, Phenotype, Rng, RngDomain, Sex, SexAllele, Tick,
+    NoveltyToleranceAllele, PerceptualGain, Permille, Phenotype, Rng, RngDomain, Sex, SexAllele,
+    ThreatSalienceAllele, Tick,
 };
+
+fn allele_gain(value: u8) -> u16 {
+    500_u16.saturating_add(u16::from(value.min(2)).saturating_mul(500))
+}
+
+fn threat_allele_gain(allele: ThreatSalienceAllele) -> u16 {
+    allele_gain(match allele {
+        ThreatSalienceAllele::Low => 0,
+        ThreatSalienceAllele::Median => 1,
+        ThreatSalienceAllele::High => 2,
+    })
+}
+
+fn novelty_allele_gain(allele: NoveltyToleranceAllele) -> u16 {
+    allele_gain(match allele {
+        NoveltyToleranceAllele::Low => 0,
+        NoveltyToleranceAllele::Median => 1,
+        NoveltyToleranceAllele::High => 2,
+    })
+}
+
+fn expressed_gain<A: Copy>(pair: crate::GenePair<A>, allele_gain: fn(A) -> u16) -> PerceptualGain {
+    let total =
+        u32::from(allele_gain(pair.maternal)).saturating_add(u32::from(allele_gain(pair.paternal)));
+    PerceptualGain::new((total / 2).min(u32::from(u16::MAX)) as u16)
+}
 
 /// Expresses and fixes a phenotype exactly once at birth.
 ///
@@ -39,11 +66,15 @@ pub fn express(genome: &Genome, rng: &Rng, tick: Tick, id: HumanId) -> Phenotype
     };
     let robustness = genome.robustness.value().min(8);
     let aptitude = genome.aptitude.value().min(8);
+    let threat_salience = expressed_gain(genome.threat_salience, threat_allele_gain);
+    let novelty_tolerance = expressed_gain(genome.novelty_tolerance, novelty_allele_gain);
     Phenotype {
         sex,
         eye_color,
         handedness,
         disease_x,
+        threat_salience,
+        novelty_tolerance,
         robustness,
         aptitude,
         base_max_health: 80_u16.saturating_add(u16::from(robustness).saturating_mul(5)),
@@ -96,6 +127,14 @@ mod tests {
             sex: GenePair {
                 maternal: SexAllele::X,
                 paternal: SexAllele::X,
+            },
+            threat_salience: GenePair {
+                maternal: ThreatSalienceAllele::Median,
+                paternal: ThreatSalienceAllele::Median,
+            },
+            novelty_tolerance: GenePair {
+                maternal: NoveltyToleranceAllele::Median,
+                paternal: NoveltyToleranceAllele::Median,
             },
             robustness: locus(0),
             aptitude: locus(0),
@@ -217,6 +256,39 @@ mod tests {
                 phenotype.lifespan_ticks
             ),
             (120, 900, 2_800)
+        );
+    }
+
+    #[test]
+    fn perceptual_loci_express_additively_across_the_full_parts_per_thousand_range() {
+        let mut low = genome();
+        low.threat_salience = GenePair {
+            maternal: crate::ThreatSalienceAllele::Low,
+            paternal: crate::ThreatSalienceAllele::Low,
+        };
+        low.novelty_tolerance = GenePair {
+            maternal: crate::NoveltyToleranceAllele::Low,
+            paternal: crate::NoveltyToleranceAllele::Low,
+        };
+        let low = express(&low, &Rng::new(1), Tick(0), HumanId(1));
+        assert_eq!(
+            (low.threat_salience.value(), low.novelty_tolerance.value()),
+            (500, 500)
+        );
+
+        let mut high = genome();
+        high.threat_salience = GenePair {
+            maternal: crate::ThreatSalienceAllele::High,
+            paternal: crate::ThreatSalienceAllele::High,
+        };
+        high.novelty_tolerance = GenePair {
+            maternal: crate::NoveltyToleranceAllele::Median,
+            paternal: crate::NoveltyToleranceAllele::High,
+        };
+        let high = express(&high, &Rng::new(1), Tick(0), HumanId(1));
+        assert_eq!(
+            (high.threat_salience.value(), high.novelty_tolerance.value()),
+            (1_500, 1_250)
         );
     }
 }

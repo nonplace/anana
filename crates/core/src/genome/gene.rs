@@ -30,6 +30,22 @@ pub enum SexAllele {
     Y,
 }
 
+/// A coarse allele for an approximation of inherited threat perception.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum ThreatSalienceAllele {
+    Low,
+    Median,
+    High,
+}
+
+/// A coarse allele for an approximation of inherited tolerance for unfamiliar models.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum NoveltyToleranceAllele {
+    Low,
+    Median,
+    High,
+}
+
 #[cfg(test)]
 mod tests {
     //! Gene pairs retain distinct maternal and paternal contributions at every locus.

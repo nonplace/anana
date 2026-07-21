@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, ChanceTemplate, Consciousness, EventAuthor, EventOutcome, EventPayload, Genome, GodId,
     HumanId, HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, Phenotype,
-    Residence, Skills, SocialBonds, WorldView, exercised_skill, learning_gain, record_defection,
-    record_positive_interaction, resolve,
+    Residence, Skills, SocialBonds, WorldView, encode_experience_magnitude, exercised_skill,
+    learning_gain, record_defection, record_positive_interaction, resolve,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
@@ -199,16 +199,21 @@ fn add_lived_experience(
         return;
     };
     let skill = exercised_skill(template);
+    let is_bad = matches!(
+        template,
+        ChanceTemplate::Accident | ChanceTemplate::Conflict
+    );
     for (id, effect) in effects {
         let Some(human) = humans.get(id) else {
             continue;
         };
+        let encoded = encode_experience_magnitude(20, is_bad, human.phenotype.threat_salience);
         if let Ok(gain) = learning_gain(
             &human.skills,
             &human.consciousness,
             &human.phenotype,
             skill,
-            20,
+            encoded,
         ) && gain > 0
         {
             effect.skill_xp.insert(skill, gain);

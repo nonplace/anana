@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use anana_core::{
     Body, Consciousness, DiseaseAllele, EyeAllele, GenePair, Genome, God, GodId, HandAllele,
-    HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, PolySublocus,
-    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills,
-    SocialBonds, Tick, express,
+    HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, NoveltyToleranceAllele,
+    PolySublocus, PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
+    Skills, SocialBonds, ThreatSalienceAllele, Tick, express,
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -148,6 +148,16 @@ fn founder_genome(index: u32) -> Genome {
             paternal: SexAllele::Y,
         }
     };
+    let threat_allele = |code: u32| match code % 3 {
+        0 => ThreatSalienceAllele::Low,
+        1 => ThreatSalienceAllele::Median,
+        _ => ThreatSalienceAllele::High,
+    };
+    let novelty_allele = |code: u32| match code % 3 {
+        0 => NoveltyToleranceAllele::Low,
+        1 => NoveltyToleranceAllele::Median,
+        _ => NoveltyToleranceAllele::High,
+    };
     Genome {
         eye: GenePair {
             maternal: EyeAllele::Brown,
@@ -174,6 +184,14 @@ fn founder_genome(index: u32) -> Genome {
             },
         },
         sex,
+        threat_salience: GenePair {
+            maternal: threat_allele(index),
+            paternal: threat_allele(index / 3),
+        },
+        novelty_tolerance: GenePair {
+            maternal: novelty_allele(index.saturating_mul(5).saturating_add(1)),
+            paternal: novelty_allele(index.saturating_mul(7).saturating_add(2)),
+        },
         robustness,
         aptitude,
     }

@@ -1,10 +1,11 @@
 use anana_core::{
-    Body, Consciousness, GroupResponse, HumanId, Instincts, LifeStage, ObservationFactors,
+    Body, Consciousness, GroupResponse, HumanId, Instincts, LifeStage, Lineage, ObservationFactors,
     Permille, Phenotype, PracticeKind, Residence, RngDomain, Sex, SkillId, Skills, SocialBonds,
-    coalition_cooperation, courtship_aversion_factor, decay_bond, decay_unpractised,
-    deference_value, derive_coalitions, group_response, layer_effort, min_awareness,
-    observational_gain, practise_skill, prestige_of, record_positive_interaction_scaled,
-    relationship_layer, teaching_gain, trim_to_social_capacity,
+    are_first_degree_relatives, coalition_cooperation, courtship_aversion_factor, decay_bond,
+    decay_unpractised, deference_value, derive_coalitions, group_response, layer_effort,
+    min_awareness, observational_gain, practise_skill, prestige_of,
+    record_positive_interaction_scaled, relationship_layer, teaching_gain, trim_to_social_capacity,
+    unfamiliar_attention,
 };
 use bevy::prelude::{Entity, Query, Res, ResMut};
 
@@ -50,6 +51,8 @@ struct LearnerSnapshot {
     skills: Skills,
     residence: Residence,
     sex: Sex,
+    phenotype: Phenotype,
+    lineage: Lineage,
     social_bonds: SocialBonds,
 }
 
@@ -62,6 +65,7 @@ type LearningQuery<'w, 's> = Query<
         &'static Body,
         &'static Instincts,
         &'static Phenotype,
+        &'static Lineage,
         &'static mut Consciousness,
         &'static mut Skills,
         &'static mut Residence,
@@ -86,17 +90,29 @@ fn reproduction_factor(stage: LifeStage, competence: u16) -> Permille {
 
 fn observation_factors(
     observer: &LearnerSnapshot,
+    model: &LearnerSnapshot,
     model_competence: u16,
     model_prestige: u32,
     skill: SkillId,
 ) -> ObservationFactors {
     let observer_competence = u16::from(observer.skills.level_of(skill)).saturating_mul(20);
-    let attention = u16::from(observer.consciousness.focus.min(100))
+    let base_attention = u16::from(observer.consciousness.focus.min(100))
         .saturating_mul(5)
         .saturating_add(u16::from(observer.consciousness.awareness.min(100)).saturating_mul(3))
         .saturating_add(model_competence.saturating_mul(2))
         .saturating_add(model_prestige.min(1000) as u16 / 5)
         .min(1000);
+    let attachment = observer
+        .social_bonds
+        .bonds
+        .get(&model.id)
+        .map_or(Permille::ZERO, |bond| bond.strength);
+    let attention = unfamiliar_attention(
+        Permille(base_attention),
+        are_first_degree_relatives(&observer.lineage, &model.lineage),
+        attachment,
+        observer.phenotype.novelty_tolerance,
+    );
     let can_retain = skill == SkillId::Recall || observer.skills.recall_learned();
     let retention = if can_retain {
         observer.consciousness.memory_capacity.min(1000)
@@ -108,7 +124,7 @@ fn observation_factors(
         .saturating_add(observer_competence.saturating_mul(3))
         .min(1000);
     ObservationFactors {
-        attention: Permille(attention),
+        attention,
         retention: Permille(retention),
         reproduction: reproduction_factor(observer.body.life_stage, observer_competence),
         motivation: Permille(motivation),
@@ -134,7 +150,7 @@ fn update_coalitions_and_groups(
 ) {
     let state = humans
         .iter_mut()
-        .map(|(_, id, _, _, _, _, _, residence, social)| (*id, (*residence, social.clone())))
+        .map(|(_, id, _, _, _, _, _, _, residence, social)| (*id, (*residence, social.clone())))
         .collect::<std::collections::BTreeMap<_, _>>();
     let social = state
         .iter()
@@ -216,7 +232,7 @@ fn update_coalitions_and_groups(
                     let Some(entity) = entities.get(&id).copied() else {
                         continue;
                     };
-                    if let Ok((_, _, _, _, _, _, _, mut current_residence, _)) =
+                    if let Ok((_, _, _, _, _, _, _, _, mut current_residence, _)) =
                         humans.get_mut(entity)
                     {
                         current_residence.id = residence;
@@ -266,6 +282,7 @@ pub(crate) fn learning(
                 body,
                 instincts,
                 phenotype,
+                lineage,
                 consciousness,
                 skills,
                 residence,
@@ -279,6 +296,8 @@ pub(crate) fn learning(
                     skills: skills.clone(),
                     residence: *residence,
                     sex: phenotype.sex,
+                    phenotype: phenotype.clone(),
+                    lineage: lineage.clone(),
                     social_bonds: social_bonds.clone(),
                 }
             },
@@ -335,7 +354,7 @@ pub(crate) fn learning(
     };
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<std::collections::BTreeMap<_, _>>();
     for observer in &snapshots {
         let Some(entity) = entities.get(&observer.id).copied() else {
@@ -347,6 +366,7 @@ pub(crate) fn learning(
             body,
             instincts,
             phenotype,
+            _,
             mut consciousness,
             mut skills,
             _,
@@ -480,6 +500,7 @@ pub(crate) fn learning(
                         observer_competence,
                         observation_factors(
                             observer,
+                            model,
                             model_competence,
                             prestige.get(&model.id).copied().unwrap_or(0),
                             skill,

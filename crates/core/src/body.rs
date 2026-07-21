@@ -68,6 +68,8 @@ mod tests {
             eye_color: EyeColor::Brown,
             handedness: Handedness::Right,
             disease_x: DiseaseStatus::Clear,
+            threat_salience: crate::PerceptualGain::MEDIAN,
+            novelty_tolerance: crate::PerceptualGain::MEDIAN,
             robustness: 4,
             aptitude: 4,
             base_max_health: 100,

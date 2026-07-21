@@ -64,6 +64,14 @@ pub(crate) fn fixture_human(id: HumanId) -> HumanState {
             maternal: SexAllele::X,
             paternal: SexAllele::X,
         },
+        threat_salience: GenePair {
+            maternal: crate::ThreatSalienceAllele::Median,
+            paternal: crate::ThreatSalienceAllele::Median,
+        },
+        novelty_tolerance: GenePair {
+            maternal: crate::NoveltyToleranceAllele::Median,
+            paternal: crate::NoveltyToleranceAllele::Median,
+        },
         robustness: PolygenicLocus { subloci: [zero; 4] },
         aptitude: PolygenicLocus { subloci: [zero; 4] },
     };

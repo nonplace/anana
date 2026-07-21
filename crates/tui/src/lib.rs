@@ -58,6 +58,14 @@ mod tests {
                     SexAllele::X
                 },
             },
+            threat_salience: GenePair {
+                maternal: anana_core::ThreatSalienceAllele::Median,
+                paternal: anana_core::ThreatSalienceAllele::Median,
+            },
+            novelty_tolerance: GenePair {
+                maternal: anana_core::NoveltyToleranceAllele::Median,
+                paternal: anana_core::NoveltyToleranceAllele::Median,
+            },
             robustness: locus,
             aptitude: locus,
         };
