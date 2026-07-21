@@ -38,7 +38,7 @@ cargo run --release -p anana -- --mode headless --offline --seed 42 --ticks 500
 That command currently prints one canonical line:
 
 ```text
-hash=207de206bea0287cb113d554b8e8834e9cc7bf5e1100e79d2dc2486813687a7a tick=500 living=138 births=100 deaths=42 infections=176 generation=1 lineages=62 lived=180 faults=0
+hash=63ceb9587ccdbf999028642e576a2204aac49a7449bbed35802d3cea8cf9bd01 tick=500 living=124 births=82 deaths=38 infections=86 generation=1 lineages=57 lived=162 faults=0
 ```
 
 Prove determinism with two commands. The first compares two seed-42 runs; the
@@ -174,7 +174,7 @@ thread count, gosh replay, UI purity, offline-mind determinism, model-output
 validation, and CLI defaults. Model-client tests use canned JSON; no test contacts
 the API.
 
-Eight Given/When/Then feature files execute through `cucumber` as living,
+Ten Given/When/Then feature files execute through `cucumber` as living,
 non-technical documentation:
 
 | Feature | What it proves |
@@ -187,6 +187,8 @@ non-technical documentation:
 | `determinism.feature` | Same seeds match, different seeds diverge, and recorded history replays |
 | `population.feature` | Fertile years, birth spacing, density dependence, death records, and many generations |
 | `social_learning.feature` | Lived experience, four-stage observation, targeted teaching, forgetting, spacing, and retrieval |
+| `bonds_and_courtship.feature` | Attachment builds with diminishing returns, betrayal wounds deeper than one kindness repairs, and courtship needs mutual attachment |
+| `prestige_and_coalitions.feature` | Standing is conferred by followers rather than seized, relationships are bounded, and large groups reorganise |
 
 For example, this documentation is executable:
 
