@@ -18,11 +18,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use anana_core::{
-        Bane, Body, Consciousness, DeadHuman, DeterministicKind, DiseaseAllele, EffectSummary,
-        EventAuthor, EventOutcome, EventPayload, EventRecord, EyeAllele, GenePair, Genome, God,
-        GodId, GoshKind, GoshTarget, HandAllele, HumanId, HumanState, Instincts, Lineage, Permille,
-        PolySublocus, PolygenicLocus, Rng, Seq, SexAllele, SkillId, SkillState, Skills, Tick,
-        Virus, VirusId, WorldSnapshot, express,
+        Bane, Body, Bond, ChanceTemplate, Consciousness, DeadHuman, DeterministicKind,
+        DiseaseAllele, EffectSummary, EventAuthor, EventOutcome, EventPayload, EventRecord,
+        EyeAllele, GenePair, Genome, God, GodId, GoshKind, GoshTarget, HandAllele, HumanId,
+        HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, PolySublocus,
+        PolygenicLocus, Rng, Seq, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId,
+        WorldSnapshot, express,
     };
     use ratatui::{
         Terminal,
@@ -247,7 +248,178 @@ mod tests {
         let output = rendered(&state(true));
         assert!(output.contains("H1 ·"));
         assert!(output.contains("the known event line"));
-        assert_eq!(output.matches('●').count(), 2);
+        assert_eq!(output.matches("● H").count(), 2);
+    }
+
+    #[test]
+    fn routine_no_op_events_do_not_drown_the_feed_in_engine_internals() {
+        let mut state = state(true);
+        state.snapshot.event_log.push(EventRecord {
+            tick: Tick(5),
+            seq: Seq(1),
+            author: EventAuthor::Engine,
+            subjects: vec![HumanId(1), HumanId(2)],
+            payload: EventPayload::Chance {
+                template: ChanceTemplate::Conflict,
+                base_prob: Permille(20),
+                skill_modifier: Some(SkillId::Planning),
+                modifier_strength: Permille(10),
+            },
+            outcome: EventOutcome::NoOp,
+            narration: None,
+        });
+        let output = rendered(&state);
+        assert!(!output.contains("Engine Conflict"));
+        assert!(!output.contains("Conflict"));
+    }
+
+    #[test]
+    fn births_illness_death_and_divine_acts_read_as_sentences_about_people() {
+        let mut state = state(true);
+        let genome = state
+            .snapshot
+            .humans
+            .get(&HumanId(1))
+            .expect("the fixture parent exists")
+            .genome
+            .clone();
+        let mut child = human(HumanId(3), true);
+        child.lineage = Lineage::new(HumanId(3), Some(HumanId(1)), Some(HumanId(2)), 1, Tick(5));
+        state.snapshot.humans.insert(HumanId(3), child);
+        state.snapshot.event_log.extend([
+            EventRecord {
+                tick: Tick(5),
+                seq: Seq(2),
+                author: EventAuthor::Engine,
+                subjects: vec![HumanId(1), HumanId(2), HumanId(3)],
+                payload: EventPayload::Deterministic(DeterministicKind::Maturation),
+                outcome: EventOutcome::Occurred(BTreeMap::from([(
+                    HumanId(3),
+                    EffectSummary {
+                        seeded_genome: Some(genome),
+                        ..EffectSummary::default()
+                    },
+                )])),
+                narration: None,
+            },
+            EventRecord {
+                tick: Tick(5),
+                seq: Seq(3),
+                author: EventAuthor::Engine,
+                subjects: vec![HumanId(2), HumanId(1)],
+                payload: EventPayload::Chance {
+                    template: ChanceTemplate::Conflict,
+                    base_prob: Permille::ONE,
+                    skill_modifier: Some(SkillId::Medicine),
+                    modifier_strength: Permille::ZERO,
+                },
+                outcome: EventOutcome::Occurred(BTreeMap::from([(
+                    HumanId(1),
+                    EffectSummary {
+                        infection: Some(VirusId(1)),
+                        ..EffectSummary::default()
+                    },
+                )])),
+                narration: None,
+            },
+            EventRecord {
+                tick: Tick(5),
+                seq: Seq(4),
+                author: EventAuthor::God,
+                subjects: vec![HumanId(2)],
+                payload: EventPayload::Gosh(GoshKind::Bless {
+                    subject: HumanId(2),
+                    boon: anana_core::Boon::Heal(10),
+                }),
+                outcome: EventOutcome::NoOp,
+                narration: None,
+            },
+        ]);
+        let output = rendered(&state);
+        assert!(output.contains("H3 was born to H1 and H2"));
+        assert!(output.contains("H1 fell ill after contact with H2"));
+        assert!(output.contains("God healed H2"));
+        assert!(!output.contains("Maturation"));
+        assert!(!output.contains("Bless {"));
+    }
+
+    #[test]
+    fn every_displayed_percentage_is_clamped_to_a_human_scale() {
+        let mut state = state(true);
+        let selected = state
+            .snapshot
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the selected fixture human exists");
+        selected.phenotype.novelty_tolerance = anana_core::PerceptualGain::HIGH;
+        selected.instincts.survival = u8::MAX;
+        selected.consciousness.awareness = u8::MAX;
+        selected.consciousness.focus = u8::MAX;
+        selected.consciousness.memory_capacity = u16::MAX;
+        selected.body.fertility = u8::MAX;
+        selected.social_bonds.bonds.insert(
+            HumanId(2),
+            Bond {
+                strength: Permille::ONE,
+                last_interaction: Tick(5),
+                last_decay_tick: Tick(5),
+                positive_interactions: 8,
+                defections: 0,
+            },
+        );
+        let output = rendered(&state);
+        assert!(output.contains("novelty 100/100"));
+        assert!(output.contains("H2 ██████████ 100/100"));
+        assert!(output.contains("survival 100/100"));
+        assert!(output.contains("awareness 100/100"));
+        assert!(output.contains("memory 1000/1000"));
+        assert!(output.contains("fertility 100"));
+        for token in output.split_whitespace() {
+            if let Some(number) = token.strip_suffix('%') {
+                let value = number
+                    .parse::<u16>()
+                    .expect("a displayed percentage is numeric");
+                assert!(value <= 100, "screen leaked {value}%");
+            }
+        }
+        assert!(!output.contains("1000%"));
+        assert!(!output.contains("1500%"));
+        assert!(!output.contains("1000‰"));
+        assert!(!output.contains("1500‰"));
+    }
+
+    #[test]
+    fn the_world_map_explains_every_glyph_and_abbreviation_it_uses() {
+        let output = rendered(&state(true));
+        assert!(output.contains("· infant"));
+        assert!(output.contains("○ child"));
+        assert!(output.contains("◌ adolescent"));
+        assert!(output.contains("● adult"));
+        assert!(output.contains("◍ elder"));
+        assert!(output.contains("i incubating"));
+        assert!(output.contains("X infectious"));
+        assert!(output.contains("H = human"));
+        assert!(output.contains("g = generation"));
+    }
+
+    #[test]
+    fn the_gosh_modal_explains_the_one_power_target_effect_and_decision() {
+        let mut state = state(true);
+        state.gosh_form = Some(GoshForm {
+            draft: GoshKind::Bless {
+                subject: HumanId(1),
+                boon: anana_core::Boon::Heal(10),
+            },
+        });
+        let output = rendered(&state);
+        assert!(output.contains("Your one power over this world"));
+        assert!(output.contains("Blessing"));
+        assert!(output.contains("TARGET"));
+        assert!(output.contains("H1"));
+        assert!(output.contains("Restore 10 health"));
+        assert!(output.contains("Enter cast"));
+        assert!(output.contains("Esc cancel"));
+        assert!(!output.contains("Bless {"));
     }
 
     #[test]
@@ -354,9 +526,60 @@ mod tests {
         next.tick = Tick(6);
         state.update_snapshot(next, state.counters.clone());
         assert!(
-            rendered(&state).contains("RECALL ONLINE — H1 BEGINS A HISTORY"),
+            rendered(&state).contains("H1 learned Recall and can now remember"),
             "the feed should name the moment memory becomes possible"
         );
+    }
+
+    #[test]
+    fn recovery_becomes_a_plain_sentence_when_the_infection_clears() {
+        let mut state = state(true);
+        state
+            .snapshot
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the fixture patient exists")
+            .infection = Some(Infection {
+            strain: VirusId(1),
+            ticks: 20,
+            severity: 10,
+            phase: InfectionPhase::Infectious,
+        });
+        let mut next = state.snapshot.clone();
+        let recovered = next
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the fixture patient survives");
+        recovered.infection = None;
+        recovered.body.immunities.insert(VirusId(1));
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        assert!(rendered(&state).contains("H1 recovered from illness V1"));
+    }
+
+    #[test]
+    fn a_first_one_way_attachment_is_described_once_as_a_shared_bond() {
+        let mut state = state(true);
+        let mut next = state.snapshot.clone();
+        next.humans
+            .get_mut(&HumanId(2))
+            .expect("the second fixture human exists")
+            .social_bonds
+            .bonds
+            .insert(
+                HumanId(1),
+                Bond {
+                    strength: Permille(200),
+                    last_interaction: Tick(6),
+                    last_decay_tick: Tick(6),
+                    positive_interactions: 1,
+                    defections: 0,
+                },
+            );
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        let output = rendered(&state);
+        assert_eq!(output.matches("H1 and H2 formed a bond").count(), 1);
     }
 
     #[test]
@@ -389,7 +612,7 @@ mod tests {
         state.focus = Panel::Feed;
         let output = rendered_at(&state, 100, 18);
         let recall = output
-            .find("RECALL ONLINE")
+            .find("learned Recall")
             .expect("the Recall moment appears");
         let later = output
             .find("a later event")
@@ -432,7 +655,7 @@ mod tests {
         );
         next.tick = Tick(6);
         state.update_snapshot(next, state.counters.clone());
-        assert!(rendered(&state).contains("KNOWLEDGE LOST — Medicine DIED WITH H1"));
+        assert!(rendered(&state).contains("H1 died; Medicine was lost"));
     }
 
     #[test]
@@ -487,7 +710,9 @@ mod tests {
                 app_state::PresentationMoment::KnowledgeLost { human, skills, .. } => {
                     Some((*human, skills.clone()))
                 }
-                app_state::PresentationMoment::RecallLearned { .. } => None,
+                app_state::PresentationMoment::RecallLearned { .. }
+                | app_state::PresentationMoment::Recovered { .. }
+                | app_state::PresentationMoment::BondFormed { .. } => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(losses, vec![(HumanId(2), vec![SkillId::Medicine])]);
@@ -528,8 +753,8 @@ mod tests {
             });
         }
         let output = rendered(&state);
-        assert!(output.contains("H3 BEGINS A NEW LINEAGE"));
-        assert!(output.contains("H4 CONTINUES GENERATION 1"));
+        assert!(output.contains("H3 began a new lineage"));
+        assert!(output.contains("H4 was born to H1 and H2"));
     }
 
     #[test]
@@ -553,7 +778,7 @@ mod tests {
         assert!(memory < knowledge);
         assert!(knowledge < attachments);
         assert!(attachments < events);
-        assert!(output.contains("Learned among: H2"));
+        assert!(output.contains("Learned around H2"));
     }
 
     #[test]

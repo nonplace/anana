@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
     DeterministicKind, EventOutcome, EventPayload, EventRecord, GoshKind, HumanId, HumanState,
-    SkillId, Tick, WorldSnapshot,
+    SkillId, Tick, VirusId, WorldSnapshot,
 };
 
 const SPLASH_FRAMES: u8 = 24;
@@ -18,6 +18,16 @@ pub(crate) enum PresentationMoment {
         tick: Tick,
         human: HumanId,
         skills: Vec<SkillId>,
+    },
+    Recovered {
+        tick: Tick,
+        human: HumanId,
+        virus: VirusId,
+    },
+    BondFormed {
+        tick: Tick,
+        first: HumanId,
+        second: HumanId,
     },
 }
 
@@ -89,6 +99,8 @@ impl AppState {
     pub fn update_snapshot(&mut self, snapshot: WorldSnapshot, counters: StatusCounters) {
         self.capture_recall_transitions(&snapshot);
         self.capture_knowledge_loss(&snapshot);
+        self.capture_recoveries(&snapshot);
+        self.capture_new_bonds(&snapshot);
         self.snapshot = snapshot;
         self.counters = counters;
         if self
@@ -184,6 +196,73 @@ impl AppState {
         self.trim_moments();
     }
 
+    fn capture_recoveries(&mut self, next: &WorldSnapshot) {
+        for (id, human) in &next.humans {
+            let Some(previous_infection) = self
+                .snapshot
+                .humans
+                .get(id)
+                .and_then(|previous| previous.infection.as_ref())
+            else {
+                continue;
+            };
+            if human.infection.is_none()
+                && human.body.immunities.contains(&previous_infection.strain)
+            {
+                self.moments.push(PresentationMoment::Recovered {
+                    tick: next.tick,
+                    human: *id,
+                    virus: previous_infection.strain,
+                });
+            }
+        }
+        self.trim_moments();
+    }
+
+    fn capture_new_bonds(&mut self, next: &WorldSnapshot) {
+        let mut formed = BTreeSet::new();
+        for (observer, human) in &next.humans {
+            for (model, bond) in &human.social_bonds.bonds {
+                if observer == model || bond.positive_interactions == 0 {
+                    continue;
+                }
+                let (first, second) = if observer < model {
+                    (*observer, *model)
+                } else {
+                    (*model, *observer)
+                };
+                let existed_before =
+                    self.snapshot.humans.get(&first).is_some_and(|previous| {
+                        previous
+                            .social_bonds
+                            .bonds
+                            .get(&second)
+                            .is_some_and(|old| old.positive_interactions > 0)
+                    }) || self.snapshot.humans.get(&second).is_some_and(|previous| {
+                        previous
+                            .social_bonds
+                            .bonds
+                            .get(&first)
+                            .is_some_and(|old| old.positive_interactions > 0)
+                    });
+                if !existed_before {
+                    formed.insert((first, second));
+                }
+            }
+        }
+        self.moments
+            .extend(
+                formed
+                    .into_iter()
+                    .map(|(first, second)| PresentationMoment::BondFormed {
+                        tick: next.tick,
+                        first,
+                        second,
+                    }),
+            );
+        self.trim_moments();
+    }
+
     fn trim_moments(&mut self) {
         let excess = self.moments.len().saturating_sub(MOMENT_LIMIT);
         if excess > 0 {
@@ -269,10 +348,10 @@ impl AppState {
     pub fn scroll_feed(&mut self, delta: i32) {
         if delta < 0 {
             let amount = u16::try_from(delta.unsigned_abs()).map_or(u16::MAX, |value| value);
-            self.feed_scroll = self.feed_scroll.saturating_sub(amount);
+            self.feed_scroll = self.feed_scroll.saturating_add(amount);
         } else {
             let amount = u16::try_from(delta).map_or(u16::MAX, |value| value);
-            self.feed_scroll = self.feed_scroll.saturating_add(amount);
+            self.feed_scroll = self.feed_scroll.saturating_sub(amount);
         }
     }
 

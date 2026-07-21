@@ -1,7 +1,7 @@
 use anana_core::{InfectionPhase, LifeStage};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -28,7 +28,14 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let block = panel(" WORLD ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let columns = usize::from((inner.width / CELL_WIDTH).max(1));
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(inner);
+    let (Some(map_area), Some(legend_area)) = (sections.first(), sections.get(1)) else {
+        return;
+    };
+    let columns = usize::from((map_area.width / CELL_WIDTH).max(1));
     let entries = state
         .snapshot
         .humans
@@ -66,5 +73,19 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .chunks(columns)
         .map(|row| Line::from(row.to_vec()))
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(lines), inner);
+    frame.render_widget(Paragraph::new(lines), *map_area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                "· infant  ○ child  ◌ adolescent  ● adult  ◍ elder",
+                Style::default().fg(STRUCTURE),
+            ),
+            Line::styled(
+                "i incubating  X infectious  ! low health",
+                Style::default().fg(STRUCTURE),
+            ),
+            Line::styled("H = human   g = generation", Style::default().fg(STRUCTURE)),
+        ]),
+        *legend_area,
+    );
 }
