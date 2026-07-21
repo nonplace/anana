@@ -1,9 +1,9 @@
 use anana_core::{
     Body, Consciousness, GroupResponse, HumanId, Instincts, LifeStage, Lineage, ObservationFactors,
     Permille, Phenotype, PracticeKind, Residence, RngDomain, Sex, SkillId, Skills, SocialBonds,
-    are_first_degree_relatives, coalition_cooperation, courtship_aversion_factor, decay_bond,
-    decay_unpractised, deference_value, derive_coalitions, group_response, layer_effort,
-    min_awareness, observational_gain, practise_skill, prestige_of,
+    are_first_degree_relatives, attachment_weighted_observation, coalition_cooperation,
+    courtship_aversion_factor, decay_bond, decay_unpractised, deference_value, derive_coalitions,
+    group_response, layer_effort, min_awareness, observational_gain, practise_skill, prestige_of,
     record_positive_interaction_scaled, relationship_layer, teaching_gain, trim_to_social_capacity,
     unfamiliar_attention,
 };
@@ -428,13 +428,17 @@ pub(crate) fn learning(
                     prestige.get(&other.id).copied().unwrap_or(0).min(1000),
                 ));
                 record_positive_interaction_scaled(bond, clock.0, model_prestige, factor);
+                let observed = attachment_weighted_observation(
+                    demonstrated_competence(&other.skills),
+                    bond.strength,
+                );
                 social_bonds
                     .observed_competence
                     .entry(other.id)
                     .and_modify(|value| {
-                        *value = (*value).max(demonstrated_competence(&other.skills));
+                        *value = (*value).max(observed);
                     })
-                    .or_insert_with(|| demonstrated_competence(&other.skills));
+                    .or_insert(observed);
             }
         }
         let (awareness_cap, focus_cap) = developmental_caps(body.life_stage);

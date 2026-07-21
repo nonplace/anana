@@ -202,6 +202,7 @@ fn spawn_restored_human(app: &mut App, human: HumanState) {
         human.lineage,
         human.residence,
         human.social_bonds,
+        human.positions,
     ));
     if let Some(infection) = infection {
         entity.insert(infection);

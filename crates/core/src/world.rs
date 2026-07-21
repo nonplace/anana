@@ -238,6 +238,15 @@ mod tests {
         variants.push(changed);
         let mut changed = original.clone();
         changed
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("fixture exists")
+            .positions
+            .slots[0]
+            .value = 700;
+        variants.push(changed);
+        let mut changed = original.clone();
+        changed
             .viruses
             .get_mut(&VirusId(1))
             .expect("fixture exists")
@@ -264,6 +273,8 @@ mod tests {
                 birth_tick: Tick(0),
                 death_tick: Tick(12),
                 skills: crate::Skills::default(),
+                positions: crate::Positions::default(),
+                social_bonds: crate::SocialBonds::default(),
             },
         );
         variants.push(changed);
@@ -304,8 +315,8 @@ mod tests {
         assert_eq!(
             world_hash(&snapshot()),
             [
-                4, 243, 173, 220, 93, 82, 203, 39, 159, 106, 136, 246, 131, 29, 101, 98, 124, 115,
-                20, 91, 119, 6, 50, 134, 133, 197, 75, 3, 199, 94, 210, 118,
+                145, 181, 194, 49, 96, 156, 166, 119, 41, 149, 113, 104, 208, 54, 175, 144, 98,
+                249, 74, 87, 62, 107, 157, 141, 53, 2, 247, 107, 153, 71, 165, 20,
             ]
         );
     }

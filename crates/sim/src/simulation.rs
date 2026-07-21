@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, Consciousness, DiseaseAllele, EyeAllele, GenePair, Genome, God, GodId, HandAllele,
     HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, NoveltyToleranceAllele,
-    PolySublocus, PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
-    Skills, SocialBonds, ThreatSalienceAllele, Tick, express,
+    PolySublocus, PolygenicLocus, Positions, Residence, ResidenceId, Rng, SexAllele, SkillId,
+    SkillState, Skills, SocialBonds, ThreatSalienceAllele, Tick, express,
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -14,7 +14,7 @@ use bevy::{
 
 use crate::systems::{
     advance_clock, aging_health, birth, build_snapshot, death, events, learning, logging_and_hash,
-    mating, virus_spread,
+    mating, positions, virus_spread,
 };
 use crate::{
     Coalitions, Config, DeadRegistry, EventDigest, EventIntake, EventLog, Gods, HashHistory,
@@ -34,6 +34,7 @@ enum TickPhase {
     Birth,
     VirusSpread,
     Events,
+    Positions,
     Death,
     LoggingAndHash,
 }
@@ -89,6 +90,7 @@ impl Plugin for SimPlugin {
                     TickPhase::Birth,
                     TickPhase::VirusSpread,
                     TickPhase::Events,
+                    TickPhase::Positions,
                     TickPhase::Death,
                     TickPhase::LoggingAndHash,
                 )
@@ -101,6 +103,7 @@ impl Plugin for SimPlugin {
             .add_systems(SimTick, birth.in_set(TickPhase::Birth))
             .add_systems(SimTick, virus_spread.in_set(TickPhase::VirusSpread))
             .add_systems(SimTick, events.in_set(TickPhase::Events))
+            .add_systems(SimTick, positions.in_set(TickPhase::Positions))
             .add_systems(SimTick, death.in_set(TickPhase::Death))
             .add_systems(SimTick, logging_and_hash.in_set(TickPhase::LoggingAndHash));
         if self.config.requested_threads <= 1 {
@@ -284,6 +287,7 @@ fn seed_founders(app: &mut App) {
             lineage,
             Residence { id: residence_id },
             SocialBonds::default(),
+            Positions::default(),
         ));
         if index == 0 {
             entity.insert(Infection {

@@ -360,6 +360,7 @@ mod tests {
                 id: anana_core::ResidenceId(1),
             },
             social_bonds: anana_core::SocialBonds::default(),
+            positions: anana_core::Positions::default(),
             infection: None,
         }
     }

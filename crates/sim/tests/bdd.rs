@@ -7,17 +7,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anana_core::{
-    Bane, Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele,
-    EventAuthor, EventPayload, GenePair, Genome, GoshKind, GoshTarget, GroupResponse, HandAllele,
-    HumanId, Instincts, LifeStage, Lineage, MateProfile, NoveltyToleranceAllele,
-    ObservationFactors, PerceptualGain, Permille, Phenotype, PolySublocus, PolygenicLocus,
-    PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
-    Skills, SocialBonds, SocialLayer, ThreatSalienceAllele, Tick, Virus, VirusId, apply_learning,
-    are_first_degree_relatives, attraction_score, bond_is_courtship_ready, coalition_cooperation,
-    conceive, courtship_aversion_factor, decay_bond, decay_unpractised, deference_value,
-    encode_experience_magnitude, express, group_response, observational_gain, optimal_teaching_gap,
-    p_infect, practise_skill, prestige_of, record_defection, record_positive_interaction,
-    relationship_layer, teaching_gain, trim_to_social_capacity, unfamiliar_attention,
+    AttachedPosition, Bane, Body, Bond, Boon, Consciousness, CoreError, DeterministicKind,
+    DiseaseAllele, EventAuthor, EventPayload, GenePair, Genome, GoshKind, GoshTarget,
+    GroupResponse, HandAllele, HumanId, Instincts, LifeStage, Lineage, MateProfile,
+    NoveltyToleranceAllele, ObservationFactors, PerceptualGain, Permille, Phenotype, PolySublocus,
+    PolygenicLocus, PositionChange, PositionSignal, Positions, PracticeKind, RearingAversion,
+    Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills, SocialBonds, SocialLayer,
+    ThreatSalienceAllele, Tick, Virus, VirusId, apply_learning, are_first_degree_relatives,
+    attachment_weighted_observation, attraction_score, bond_is_courtship_ready,
+    coalition_cooperation, conceive, courtship_aversion_factor, decay_bond, decay_unpractised,
+    deference_value, encode_experience_magnitude, express, group_response, observational_gain,
+    optimal_teaching_gap, p_infect, practise_skill, prestige_of, receive_position,
+    record_defection, record_positive_interaction, relationship_layer, teaching_gain,
+    trim_to_social_capacity, unfamiliar_attention,
 };
 use anana_sim::{
     App, Config, CounterfactualComparison, CounterfactualDifferences, EventIntake, EventLog,
@@ -68,6 +70,8 @@ pub struct AnanaWorld {
     counterfactual_bytes: Vec<u8>,
     straight_hash: Option<[u8; 32]>,
     branch_family: BTreeSet<HumanId>,
+    positions: Option<Positions>,
+    position_change: Option<PositionChange>,
 }
 
 impl std::fmt::Debug for AnanaWorld {
@@ -666,6 +670,7 @@ fn spawn_scenario_human(app: &mut App, id: HumanId, female: bool, age_permille: 
         Lineage::new(id, None, None, 0, Tick(0)),
         Residence { id: ResidenceId(1) },
         SocialBonds::default(),
+        Positions::default(),
     ));
 }
 
@@ -1055,6 +1060,7 @@ fn a_newborn_with_expressed_traits(w: &mut AnanaWorld) {
         Lineage::new(id, None, None, 0, Tick(0)),
         Residence { id: ResidenceId(1) },
         SocialBonds::default(),
+        Positions::default(),
     ));
     app.world_mut().resource_mut::<NextHumanId>().0 = HumanId(2);
     app.world_mut().resource_mut::<SimulationStats>().living = 1;
@@ -1751,6 +1757,125 @@ fn expressed_perceptual_gains_stay_in_range(w: &mut AnanaWorld) {
     let expressed = express(child, &Rng { master_seed: 42 }, Tick(10), HumanId(99));
     assert!((500..=1500).contains(&expressed.threat_salience.value()));
     assert!((500..=1500).contains(&expressed.novelty_tolerance.value()));
+}
+
+#[given("a child who has not learned to remember")]
+fn a_child_without_recall_has_no_positions(w: &mut AnanaWorld) {
+    w.positions = Some(Positions::default());
+}
+
+#[when("strong information reaches one unnamed position")]
+fn strong_information_reaches_an_amnesic_child(w: &mut AnanaWorld) {
+    let positions = w.positions.as_mut().expect("the child has position slots");
+    w.position_change = Some(receive_position(
+        positions,
+        PositionSignal {
+            slot: 0,
+            value: 1_000,
+            retention: Permille::ZERO,
+        },
+        &[],
+        true,
+    ));
+}
+
+#[then("the child retains none of it and acquires no position")]
+fn the_amnesic_child_remains_pre_ideological(w: &mut AnanaWorld) {
+    assert_eq!(w.positions, Some(Positions::default()));
+    assert_eq!(w.position_change, Some(PositionChange::default()));
+}
+
+#[given("a remembering person with a position and no attached allies")]
+fn a_remembering_person_has_a_socially_cheap_position(w: &mut AnanaWorld) {
+    let mut positions = Positions::default();
+    positions.slots[0].value = -600;
+    positions.slots[0].conviction = Permille(500);
+    w.positions = Some(positions);
+    w.social_values.clear();
+}
+
+#[when("strongly retained information contradicts that position")]
+fn strongly_retained_information_contradicts_the_position(w: &mut AnanaWorld) {
+    let positions = w.positions.as_mut().expect("the person has positions");
+    w.position_change = Some(receive_position(
+        positions,
+        PositionSignal {
+            slot: 0,
+            value: 600,
+            retention: Permille::ONE,
+        },
+        &[],
+        true,
+    ));
+}
+
+#[then("the person moves toward the new information")]
+fn cheap_contradiction_moves_the_person_toward_it(w: &mut AnanaWorld) {
+    assert!(
+        w.position_change
+            .expect("the position changed")
+            .moved_toward
+    );
+}
+
+#[given("a remembering person attached to people who share their position")]
+fn a_remembering_person_has_socially_costly_allies(w: &mut AnanaWorld) {
+    let mut positions = Positions::default();
+    positions.slots[0].value = -600;
+    positions.slots[0].conviction = Permille(800);
+    w.positions = Some(positions);
+    w.social_values = vec![900, 900];
+}
+
+#[when("partly retained information contradicts that position")]
+fn partly_retained_information_contradicts_the_position(w: &mut AnanaWorld) {
+    let allies = [
+        AttachedPosition {
+            value: -650,
+            attachment: Permille(w.social_values[0] as u16),
+        },
+        AttachedPosition {
+            value: -700,
+            attachment: Permille(w.social_values[1] as u16),
+        },
+    ];
+    let positions = w.positions.as_mut().expect("the person has positions");
+    w.position_change = Some(receive_position(
+        positions,
+        PositionSignal {
+            slot: 0,
+            value: 600,
+            retention: Permille(500),
+        },
+        &allies,
+        true,
+    ));
+}
+
+#[then("the person moves away from the new information")]
+fn costly_contradiction_moves_the_person_away(w: &mut AnanaWorld) {
+    assert!(w.position_change.expect("the position changed").moved_away);
+}
+
+#[then("one encounter cannot make the position lurch without limit")]
+fn one_encounter_has_a_bounded_step(w: &mut AnanaWorld) {
+    assert!(w.position_change.expect("the position changed").step <= 100);
+}
+
+#[given("the same behaviour is seen in a close companion and a distant acquaintance")]
+fn the_same_behaviour_is_seen_at_two_attachment_levels(w: &mut AnanaWorld) {
+    w.social_values = vec![
+        u32::from(attachment_weighted_observation(800, Permille(900))),
+        u32::from(attachment_weighted_observation(800, Permille(100))),
+    ];
+}
+
+#[when("a person forms an impression of what other people do")]
+fn a_person_forms_a_social_impression(_w: &mut AnanaWorld) {}
+
+#[then("the close companion counts more toward that impression")]
+fn close_companions_dominate_social_impressions(w: &mut AnanaWorld) {
+    assert!(w.social_values[0] > w.social_values[1]);
 }
 
 #[tokio::main]

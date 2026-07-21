@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anana_core::{
     Body, Consciousness, DeterministicKind, EffectSummary, EventAuthor, EventOutcome, EventPayload,
-    Genome, HumanId, Instincts, Lineage, Phenotype, RearingAversion, Residence, Skills,
+    Genome, HumanId, Instincts, Lineage, Phenotype, Positions, RearingAversion, Residence, Skills,
     SocialBonds, conceive, express,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
@@ -56,6 +56,7 @@ pub(crate) struct Newborn {
     pub lineage: Lineage,
     pub residence: Residence,
     pub social_bonds: SocialBonds,
+    pub positions: Positions,
 }
 
 pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
@@ -71,6 +72,7 @@ pub(crate) fn spawn_newborn(commands: &mut Commands<'_, '_>, newborn: Newborn) {
         newborn.lineage,
         newborn.residence,
         newborn.social_bonds,
+        newborn.positions,
     ));
 }
 
@@ -163,6 +165,7 @@ pub(crate) fn birth(resources: BirthResources<'_, '_>, mut humans: ParentQuery<'
             lineage,
             residence: mother.residence,
             social_bonds: SocialBonds::default(),
+            positions: Positions::default(),
         };
         spawn_newborn(&mut commands, newborn);
         let outcome = EventOutcome::Occurred(BTreeMap::from([(
