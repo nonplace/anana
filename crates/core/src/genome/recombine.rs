@@ -90,6 +90,30 @@ fn inherit_pair<A: Copy>(
     }
 }
 
+fn inherit_unmutated_pair<A: Copy>(
+    mother: GenePair<A>,
+    father: GenePair<A>,
+    key: ConceptionKey<'_>,
+    base_salt: u64,
+) -> GenePair<A> {
+    GenePair {
+        maternal: gamete_allele(
+            mother,
+            key.rng
+                .coin(RngDomain::Meiosis, key.tick, key.child_id, base_salt),
+        ),
+        paternal: gamete_allele(
+            father,
+            key.rng.coin(
+                RngDomain::Meiosis,
+                key.tick,
+                key.child_id,
+                base_salt.saturating_add(1),
+            ),
+        ),
+    }
+}
+
 fn inherit_sublocus(
     mother: PolySublocus,
     father: PolySublocus,
@@ -174,6 +198,18 @@ pub fn conceive(
             RngDomain::SexDetermination,
             flip_sex,
         ),
+        threat_salience: inherit_unmutated_pair(
+            mother.threat_salience,
+            father.threat_salience,
+            key,
+            300,
+        ),
+        novelty_tolerance: inherit_unmutated_pair(
+            mother.novelty_tolerance,
+            father.novelty_tolerance,
+            key,
+            310,
+        ),
         robustness: inherit_polygenic(mother.robustness, father.robustness, key, 100),
         aptitude: inherit_polygenic(mother.aptitude, father.aptitude, key, 200),
     }
@@ -213,6 +249,14 @@ mod tests {
                 maternal: SexAllele::X,
                 paternal: SexAllele::X,
             },
+            threat_salience: GenePair {
+                maternal: crate::ThreatSalienceAllele::Low,
+                paternal: crate::ThreatSalienceAllele::High,
+            },
+            novelty_tolerance: GenePair {
+                maternal: crate::NoveltyToleranceAllele::Low,
+                paternal: crate::NoveltyToleranceAllele::High,
+            },
             robustness: PolygenicLocus {
                 subloci: [PolySublocus::new(0, 1).expect("valid dose"); 4],
             },
@@ -236,6 +280,14 @@ mod tests {
             sex: GenePair {
                 maternal: SexAllele::X,
                 paternal: SexAllele::Y,
+            },
+            threat_salience: GenePair {
+                maternal: crate::ThreatSalienceAllele::Median,
+                paternal: crate::ThreatSalienceAllele::High,
+            },
+            novelty_tolerance: GenePair {
+                maternal: crate::NoveltyToleranceAllele::Median,
+                paternal: crate::NoveltyToleranceAllele::High,
             },
             robustness: locus(0),
             aptitude: locus(1),
@@ -275,6 +327,30 @@ mod tests {
             sides.iter().any(|side| *side) && sides.iter().any(|side| !*side)
         });
         assert!(mixed);
+    }
+
+    #[test]
+    fn each_perceptual_locus_inherits_one_actual_allele_from_each_parent() {
+        let (mother, father) = parents();
+        for seed in 0..100 {
+            let child = conceive(&mother, &father, &Rng::new(seed), Tick(2), HumanId(4));
+            assert!(
+                child.threat_salience.maternal == mother.threat_salience.maternal
+                    || child.threat_salience.maternal == mother.threat_salience.paternal
+            );
+            assert!(
+                child.threat_salience.paternal == father.threat_salience.maternal
+                    || child.threat_salience.paternal == father.threat_salience.paternal
+            );
+            assert!(
+                child.novelty_tolerance.maternal == mother.novelty_tolerance.maternal
+                    || child.novelty_tolerance.maternal == mother.novelty_tolerance.paternal
+            );
+            assert!(
+                child.novelty_tolerance.paternal == father.novelty_tolerance.maternal
+                    || child.novelty_tolerance.paternal == father.novelty_tolerance.paternal
+            );
+        }
     }
 
     #[test]
@@ -325,6 +401,14 @@ mod tests {
             sex: GenePair {
                 maternal: SexAllele::X,
                 paternal: SexAllele::X,
+            },
+            threat_salience: GenePair {
+                maternal: crate::ThreatSalienceAllele::Median,
+                paternal: crate::ThreatSalienceAllele::Median,
+            },
+            novelty_tolerance: GenePair {
+                maternal: crate::NoveltyToleranceAllele::Median,
+                paternal: crate::NoveltyToleranceAllele::Median,
             },
             robustness: locus(0),
             aptitude: locus(0),

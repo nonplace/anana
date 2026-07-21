@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Permille;
+use crate::{PerceptualGain, Permille};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Debug)]
 pub enum Sex {
@@ -35,6 +35,10 @@ pub struct Phenotype {
     pub eye_color: EyeColor,
     pub handedness: Handedness,
     pub disease_x: DiseaseStatus,
+    /// An inherited perceptual gain, not an opinion or preference.
+    pub threat_salience: PerceptualGain,
+    /// An inherited perceptual gain, not an opinion or preference.
+    pub novelty_tolerance: PerceptualGain,
     pub robustness: u8,
     pub aptitude: u8,
     pub base_max_health: u16,
@@ -56,6 +60,8 @@ mod tests {
             eye_color: EyeColor::Brown,
             handedness: Handedness::Right,
             disease_x: DiseaseStatus::Carrier,
+            threat_salience: PerceptualGain::MEDIAN,
+            novelty_tolerance: PerceptualGain::MEDIAN,
             robustness: 4,
             aptitude: 5,
             base_max_health: 100,

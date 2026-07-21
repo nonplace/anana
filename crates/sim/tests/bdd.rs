@@ -9,14 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use anana_core::{
     Bane, Body, Bond, Boon, Consciousness, CoreError, DeterministicKind, DiseaseAllele,
     EventAuthor, EventPayload, GenePair, Genome, GoshKind, GoshTarget, GroupResponse, HandAllele,
-    HumanId, Instincts, LifeStage, Lineage, MateProfile, ObservationFactors, Permille, Phenotype,
-    PolySublocus, PolygenicLocus, PracticeKind, RearingAversion, Residence, ResidenceId, Rng,
-    SexAllele, SkillId, SkillState, Skills, SocialBonds, SocialLayer, Tick, Virus, VirusId,
-    apply_learning, are_first_degree_relatives, attraction_score, bond_is_courtship_ready,
-    coalition_cooperation, conceive, courtship_aversion_factor, decay_bond, decay_unpractised,
-    deference_value, express, group_response, observational_gain, optimal_teaching_gap, p_infect,
-    practise_skill, prestige_of, record_defection, record_positive_interaction, relationship_layer,
-    teaching_gain, trim_to_social_capacity,
+    HumanId, Instincts, LifeStage, Lineage, MateProfile, NoveltyToleranceAllele,
+    ObservationFactors, PerceptualGain, Permille, Phenotype, PolySublocus, PolygenicLocus,
+    PracticeKind, RearingAversion, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState,
+    Skills, SocialBonds, SocialLayer, ThreatSalienceAllele, Tick, Virus, VirusId, apply_learning,
+    are_first_degree_relatives, attraction_score, bond_is_courtship_ready, coalition_cooperation,
+    conceive, courtship_aversion_factor, decay_bond, decay_unpractised, deference_value,
+    encode_experience_magnitude, express, group_response, observational_gain, optimal_teaching_gap,
+    p_infect, practise_skill, prestige_of, record_defection, record_positive_interaction,
+    relationship_layer, teaching_gain, trim_to_social_capacity, unfamiliar_attention,
 };
 use anana_sim::{
     App, Config, CounterfactualComparison, CounterfactualDifferences, EventIntake, EventLog,
@@ -105,6 +106,14 @@ fn known_genome(female: bool, carrier: bool) -> Genome {
             maternal: SexAllele::X,
             paternal: if female { SexAllele::X } else { SexAllele::Y },
         },
+        threat_salience: GenePair {
+            maternal: anana_core::ThreatSalienceAllele::Median,
+            paternal: anana_core::ThreatSalienceAllele::Median,
+        },
+        novelty_tolerance: GenePair {
+            maternal: anana_core::NoveltyToleranceAllele::Median,
+            paternal: anana_core::NoveltyToleranceAllele::Median,
+        },
         robustness: locus(0, 1),
         aptitude: locus(1, 0),
     }
@@ -116,6 +125,8 @@ fn learning_phenotype() -> Phenotype {
         eye_color: anana_core::EyeColor::Brown,
         handedness: anana_core::Handedness::Right,
         disease_x: anana_core::DiseaseStatus::Clear,
+        threat_salience: anana_core::PerceptualGain::MEDIAN,
+        novelty_tolerance: anana_core::PerceptualGain::MEDIAN,
         robustness: 4,
         aptitude: 0,
         base_max_health: 100,
@@ -1612,6 +1623,134 @@ fn both_comparisons_are_byte_for_byte_identical(w: &mut AnanaWorld) {
         .expect("the second comparison serializes"),
         w.counterfactual_bytes
     );
+}
+
+#[given("two remembering people with low and high threat salience")]
+fn two_people_have_different_threat_salience(w: &mut AnanaWorld) {
+    let low_bad = encode_experience_magnitude(100, true, PerceptualGain::LOW);
+    let high_bad = encode_experience_magnitude(100, true, PerceptualGain::HIGH);
+    let low_good = encode_experience_magnitude(100, false, PerceptualGain::LOW);
+    let high_good = encode_experience_magnitude(100, false, PerceptualGain::HIGH);
+    w.social_values = vec![low_bad, high_bad, low_good, high_good];
+}
+
+#[when("both live through the same bad experience and the same good experience")]
+fn both_people_encode_the_same_experiences(_w: &mut AnanaWorld) {}
+
+#[then("the bad experience is stronger for the high salience person")]
+fn high_salience_strengthens_bad_experience(w: &mut AnanaWorld) {
+    assert!(w.social_values[1] > w.social_values[0]);
+}
+
+#[then("the good experience is unchanged for both people")]
+fn salience_does_not_change_good_experience(w: &mut AnanaWorld) {
+    assert_eq!(w.social_values[2], w.social_values[3]);
+}
+
+#[given("two observers with low and high novelty tolerance")]
+fn two_observers_have_different_novelty_tolerance(w: &mut AnanaWorld) {
+    let base = Permille(600);
+    w.social_values = vec![
+        u32::from(unfamiliar_attention(base, false, Permille(100), PerceptualGain::LOW).0),
+        u32::from(unfamiliar_attention(base, false, Permille(100), PerceptualGain::HIGH).0),
+        u32::from(unfamiliar_attention(base, true, Permille(100), PerceptualGain::LOW).0),
+        u32::from(unfamiliar_attention(base, true, Permille(100), PerceptualGain::HIGH).0),
+        u32::from(unfamiliar_attention(base, false, Permille(700), PerceptualGain::LOW).0),
+        u32::from(unfamiliar_attention(base, false, Permille(700), PerceptualGain::HIGH).0),
+    ];
+}
+
+#[when("both watch an unfamiliar person to whom they are weakly attached")]
+fn both_observers_watch_an_unfamiliar_person(_w: &mut AnanaWorld) {}
+
+#[then("the more novelty tolerant observer pays more attention")]
+fn novelty_tolerance_raises_unfamiliar_attention(w: &mut AnanaWorld) {
+    assert!(w.social_values[1] > w.social_values[0]);
+}
+
+#[then("kin and close companions receive the same attention from both observers")]
+fn familiar_people_bypass_novelty_tolerance(w: &mut AnanaWorld) {
+    assert_eq!(w.social_values[2], w.social_values[3]);
+    assert_eq!(w.social_values[4], w.social_values[5]);
+}
+
+#[given("parents carrying different copies of both perceptual traits")]
+fn parents_carry_different_perceptual_alleles(w: &mut AnanaWorld) {
+    let mut mother = known_genome(true, false);
+    mother.threat_salience = GenePair {
+        maternal: ThreatSalienceAllele::Low,
+        paternal: ThreatSalienceAllele::Median,
+    };
+    mother.novelty_tolerance = GenePair {
+        maternal: NoveltyToleranceAllele::High,
+        paternal: NoveltyToleranceAllele::Median,
+    };
+    let mut father = known_genome(false, false);
+    father.threat_salience = GenePair {
+        maternal: ThreatSalienceAllele::High,
+        paternal: ThreatSalienceAllele::Median,
+    };
+    father.novelty_tolerance = GenePair {
+        maternal: NoveltyToleranceAllele::Low,
+        paternal: NoveltyToleranceAllele::Median,
+    };
+    w.mother = Some(mother);
+    w.father = Some(father);
+}
+
+#[when("they have a child")]
+fn parents_have_a_child_with_perceptual_traits(w: &mut AnanaWorld) {
+    let rng = Rng { master_seed: 42 };
+    w.child = Some(conceive(
+        w.mother.as_ref().expect("the mother exists"),
+        w.father.as_ref().expect("the father exists"),
+        &rng,
+        Tick(10),
+        HumanId(99),
+    ));
+}
+
+#[then("the child receives one copy of each trait from each parent")]
+fn the_child_inherits_each_perceptual_trait_from_both_parents(w: &mut AnanaWorld) {
+    let mother = w.mother.as_ref().expect("the mother exists");
+    let father = w.father.as_ref().expect("the father exists");
+    let child = w.child.as_ref().expect("the child exists");
+    assert!(
+        [
+            mother.threat_salience.maternal,
+            mother.threat_salience.paternal,
+        ]
+        .contains(&child.threat_salience.maternal)
+    );
+    assert!(
+        [
+            father.threat_salience.maternal,
+            father.threat_salience.paternal,
+        ]
+        .contains(&child.threat_salience.paternal)
+    );
+    assert!(
+        [
+            mother.novelty_tolerance.maternal,
+            mother.novelty_tolerance.paternal,
+        ]
+        .contains(&child.novelty_tolerance.maternal)
+    );
+    assert!(
+        [
+            father.novelty_tolerance.maternal,
+            father.novelty_tolerance.paternal,
+        ]
+        .contains(&child.novelty_tolerance.paternal)
+    );
+}
+
+#[then("both expressed perceptual gains remain between half and one and a half times normal")]
+fn expressed_perceptual_gains_stay_in_range(w: &mut AnanaWorld) {
+    let child = w.child.as_ref().expect("the child exists");
+    let expressed = express(child, &Rng { master_seed: 42 }, Tick(10), HumanId(99));
+    assert!((500..=1500).contains(&expressed.threat_salience.value()));
+    assert!((500..=1500).contains(&expressed.novelty_tolerance.value()));
 }
 
 #[tokio::main]

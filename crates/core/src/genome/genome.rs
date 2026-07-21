@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{CoreError, DiseaseAllele, EyeAllele, GenePair, HandAllele, SexAllele};
+use crate::{
+    CoreError, DiseaseAllele, EyeAllele, GenePair, HandAllele, NoveltyToleranceAllele, SexAllele,
+    ThreatSalienceAllele,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub struct PolySublocus {
@@ -49,6 +52,8 @@ pub struct Genome {
     pub hand: GenePair<HandAllele>,
     pub disease_x: GenePair<DiseaseAllele>,
     pub sex: GenePair<SexAllele>,
+    pub threat_salience: GenePair<ThreatSalienceAllele>,
+    pub novelty_tolerance: GenePair<NoveltyToleranceAllele>,
     pub robustness: PolygenicLocus,
     pub aptitude: PolygenicLocus,
 }
@@ -102,6 +107,14 @@ mod tests {
             sex: GenePair {
                 maternal: SexAllele::X,
                 paternal: SexAllele::Y,
+            },
+            threat_salience: GenePair {
+                maternal: crate::ThreatSalienceAllele::Median,
+                paternal: crate::ThreatSalienceAllele::Median,
+            },
+            novelty_tolerance: GenePair {
+                maternal: crate::NoveltyToleranceAllele::Median,
+                paternal: crate::NoveltyToleranceAllele::Median,
             },
             robustness: valid_locus(),
             aptitude: valid_locus(),
