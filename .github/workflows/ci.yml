@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  required:
+    name: Required checks
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain and restore caches
+        uses: moonrepo/setup-rust@v1
+        with:
+          inherit-toolchain: true
+          cache: true
+          cache-target: debug
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint every target and feature
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run the network-free workspace suite
+        run: cargo test --workspace
+
+  long-validation:
+    name: Long validation (reports disproven claims)
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # These tests measure emergent claims, including hypotheses the model disproved. A failed
+    # assertion must remain visible here without turning the required CI gate red or being hidden.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Rust toolchain and restore caches
+        uses: moonrepo/setup-rust@v1
+        with:
+          inherit-toolchain: true
+          cache: true
+          cache-target: release
+      - name: Report long-running emergent validation
+        run: |
+          # The harness-free Cucumber target does not accept libtest's --ignored flag, so the
+          # workspace-wide spelling cannot reach these tests. Run every ignored integration
+          # target explicitly and leave their scientific assertions unchanged.
+          validation_status=0
+          cargo test --release --workspace --exclude anana-sim -- --ignored || validation_status=$?
+          cargo test --release -p anana-sim --test bonds_and_courtship -- --ignored || validation_status=$?
+          cargo test --release -p anana-sim --test perceptual_gains -- --ignored || validation_status=$?
+          cargo test --release -p anana-sim --test population -- --ignored || validation_status=$?
+          cargo test --release -p anana-sim --test positions -- --ignored || validation_status=$?
+          exit "$validation_status"

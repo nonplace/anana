@@ -1,5 +1,7 @@
 # AnanA
 
+[![CI](https://github.com/nonplace/anana/actions/workflows/ci.yml/badge.svg)](https://github.com/nonplace/anana/actions/workflows/ci.yml)
+
 **Conway's *Game of Life* simulated cells. AnanA simulates lives.**
 
 AnanA is a deterministic, tick-driven simulation of human life, written in
