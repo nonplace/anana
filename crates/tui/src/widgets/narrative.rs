@@ -1,26 +1,38 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::{Modifier, Style},
     text::Line,
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
-use crate::AppState;
+use crate::{
+    AppState,
+    palette::{HISTORICAL, LIVE, panel},
+};
 
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let lines = match state.selected_human() {
         None => vec![Line::from("No living human selected")],
         Some(human) if !human.skills.recall_learned() => vec![
-            Line::styled("AMNESIA", Style::default().fg(Color::LightMagenta)),
-            Line::from("Recall has not been learned. No personal history is accessible."),
+            Line::styled(
+                "AMNESIA",
+                Style::default().fg(LIVE).add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(
+                "Recall has not been learned. No personal history is accessible.",
+                Style::default().fg(HISTORICAL),
+            ),
         ],
         Some(human) => {
             if let Some(story) = &state.narrative {
                 vec![
-                    Line::styled(story.title.clone(), Style::default().fg(Color::LightCyan)),
+                    Line::styled(
+                        story.title.clone(),
+                        Style::default().fg(LIVE).add_modifier(Modifier::BOLD),
+                    ),
                     Line::from(story.story.clone()),
-                    Line::styled(story.epitaph.clone(), Style::default().fg(Color::DarkGray)),
+                    Line::styled(story.epitaph.clone(), Style::default().fg(HISTORICAL)),
                 ]
             } else {
                 let remembered = state
@@ -44,7 +56,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(Block::bordered().title(" Narrative / remembered history ")),
+            .block(panel(" STORY ")),
         area,
     );
 }

@@ -118,6 +118,7 @@ pub(crate) async fn run_live<M: Mind>(
     let mut terminal = TerminalGuard::enter()?;
     loop {
         terminal.draw(&state)?;
+        state.advance_splash();
         if tick_limit.is_some_and(|limit| state.snapshot.tick.0 >= limit) {
             break;
         }
@@ -180,6 +181,7 @@ pub(crate) fn run_replay(seed: u64, config: Config, ticks: u64) -> Result<()> {
     let mut terminal = TerminalGuard::enter()?;
     loop {
         terminal.draw(&state)?;
+        state.advance_splash();
         let Some(key) = TerminalGuard::poll_key(Duration::from_millis(INPUT_POLL_MILLIS))? else {
             continue;
         };

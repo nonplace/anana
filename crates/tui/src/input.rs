@@ -163,6 +163,10 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) -> UiIntent {
     if key.kind == KeyEventKind::Release {
         return UiIntent::None;
     }
+    if state.splash_visible() {
+        state.dismiss_splash();
+        return UiIntent::None;
+    }
     if state.gosh_form.is_some() {
         return handle_gosh_key(state, key.code);
     }

@@ -2,10 +2,12 @@
 
 mod app_state;
 mod input;
+mod palette;
 mod widgets;
 
 pub use app_state::*;
 pub use input::*;
+pub use palette::{ANSI_DIVINE, ANSI_LIVE, ANSI_RESET, ANSI_STRUCTURE, DIVINE_AMBER};
 pub use ratatui;
 pub use widgets::render;
 
@@ -16,11 +18,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use anana_core::{
-        Bane, Body, Consciousness, DeterministicKind, DiseaseAllele, EventAuthor, EventOutcome,
-        EventPayload, EventRecord, EyeAllele, GenePair, Genome, God, GodId, GoshKind, GoshTarget,
-        HandAllele, HumanId, HumanState, Instincts, Lineage, Permille, PolySublocus,
-        PolygenicLocus, Rng, Seq, SexAllele, SkillId, SkillState, Skills, Tick, Virus, VirusId,
-        WorldSnapshot, express,
+        Bane, Body, Consciousness, DeadHuman, DeterministicKind, DiseaseAllele, EffectSummary,
+        EventAuthor, EventOutcome, EventPayload, EventRecord, EyeAllele, GenePair, Genome, God,
+        GodId, GoshKind, GoshTarget, HandAllele, HumanId, HumanState, Instincts, Lineage, Permille,
+        PolySublocus, PolygenicLocus, Rng, Seq, SexAllele, SkillId, SkillState, Skills, Tick,
+        Virus, VirusId, WorldSnapshot, express,
     };
     use ratatui::{
         Terminal,
@@ -119,7 +121,7 @@ mod tests {
         }
     }
 
-    fn state(recall: bool) -> AppState {
+    fn state_with_splash(recall: bool) -> AppState {
         let record = EventRecord {
             tick: Tick(4),
             seq: Seq(0),
@@ -169,8 +171,14 @@ mod tests {
         )
     }
 
-    fn rendered(state: &AppState) -> String {
-        let backend = TestBackend::new(120, 42);
+    fn state(recall: bool) -> AppState {
+        let mut state = state_with_splash(recall);
+        state.dismiss_splash();
+        state
+    }
+
+    fn rendered_at(state: &AppState, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("the test terminal starts");
         terminal
             .draw(|frame| render(frame, state))
@@ -183,10 +191,61 @@ mod tests {
             .collect::<String>()
     }
 
+    fn rendered(state: &AppState) -> String {
+        rendered_at(state, 120, 42)
+    }
+
+    fn colors(state: &AppState) -> Vec<ratatui::style::Color> {
+        let backend = TestBackend::new(120, 42);
+        let mut terminal = Terminal::new(backend).expect("the test terminal starts");
+        terminal
+            .draw(|frame| render(frame, state))
+            .expect("the dashboard renders");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.fg)
+            .collect()
+    }
+
+    #[test]
+    fn the_opening_frame_centres_the_palindrome_its_axis_and_the_seed() {
+        let output = rendered(&state_with_splash(true));
+        assert!(output.contains("A n a n A"));
+        assert!(output.contains("---------|---------"));
+        assert!(output.contains("seed 42"));
+        assert!(output.contains("a world where every life runs once, unless you run it twice."));
+        assert!(!output.contains("World / population map"));
+    }
+
+    #[test]
+    fn any_key_dismisses_the_splash_without_triggering_its_normal_action() {
+        let mut state = state_with_splash(true);
+        let intent = handle_key(
+            &mut state,
+            KeyEvent::new(
+                KeyCode::Char('g'),
+                ratatui::crossterm::event::KeyModifiers::NONE,
+            ),
+        );
+        assert_eq!(intent, UiIntent::None);
+        assert!(!state.splash_visible());
+        assert!(state.gosh_form.is_none());
+    }
+
+    #[test]
+    fn a_terminal_too_narrow_for_the_wordmark_skips_the_splash_cleanly() {
+        let output = rendered_at(&state_with_splash(true), 30, 16);
+        assert!(!output.contains("A n a n A"));
+        assert!(output.contains("WORLD"));
+    }
+
     #[test]
     fn the_dashboard_renders_the_selected_human_event_feed_and_one_map_glyph_per_human() {
         let output = rendered(&state(true));
-        assert!(output.contains("Human 1"));
+        assert!(output.contains("H1 ·"));
         assert!(output.contains("the known event line"));
         assert_eq!(output.matches('●').count(), 2);
     }
@@ -208,6 +267,298 @@ mod tests {
     fn rendering_the_same_presentation_state_twice_produces_identical_buffers() {
         let state = state(true);
         assert_eq!(rendered(&state), rendered(&state));
+    }
+
+    #[test]
+    fn amber_never_appears_when_no_divine_path_is_visible() {
+        assert!(!colors(&state(true)).contains(&DIVINE_AMBER));
+    }
+
+    #[test]
+    fn amber_marks_a_divine_record_and_the_gosh_form() {
+        let mut state = state(true);
+        state.snapshot.event_log.push(EventRecord {
+            tick: state.snapshot.tick,
+            seq: Seq(1),
+            author: EventAuthor::God,
+            subjects: vec![HumanId(1)],
+            payload: EventPayload::Gosh(GoshKind::Bless {
+                subject: HumanId(1),
+                boon: anana_core::Boon::Heal(10),
+            }),
+            outcome: EventOutcome::NoOp,
+            narration: None,
+        });
+        state.gosh_form = Some(GoshForm {
+            draft: GoshKind::Bless {
+                subject: HumanId(1),
+                boon: anana_core::Boon::Heal(10),
+            },
+        });
+        let amber_cells = colors(&state)
+            .into_iter()
+            .filter(|color| *color == DIVINE_AMBER)
+            .count();
+        assert!(amber_cells > 0);
+    }
+
+    #[test]
+    fn a_worldwide_decree_marks_every_affected_human_as_divinely_touched() {
+        let mut state = state(true);
+        state.snapshot.event_log.push(EventRecord {
+            tick: state.snapshot.tick,
+            seq: Seq(1),
+            author: EventAuthor::God,
+            subjects: Vec::new(),
+            payload: EventPayload::Gosh(GoshKind::Afflict {
+                target: GoshTarget::All,
+                bane: Bane::Harm(10),
+            }),
+            outcome: EventOutcome::Occurred(BTreeMap::from([
+                (
+                    HumanId(1),
+                    EffectSummary {
+                        health_delta: -10,
+                        ..EffectSummary::default()
+                    },
+                ),
+                (
+                    HumanId(2),
+                    EffectSummary {
+                        health_delta: -10,
+                        ..EffectSummary::default()
+                    },
+                ),
+            ])),
+            narration: None,
+        });
+        assert!(state.is_divinely_touched(HumanId(1)));
+        assert!(state.is_divinely_touched(HumanId(2)));
+    }
+
+    #[test]
+    fn learning_recall_becomes_the_strongest_non_divine_moment_in_the_feed() {
+        let mut state = state(false);
+        let mut next = state.snapshot.clone();
+        let learner = next
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the fixture learner exists");
+        learner.skills.levels.insert(
+            SkillId::Recall,
+            SkillState {
+                xp: 100,
+                learned: true,
+            },
+        );
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        assert!(
+            rendered(&state).contains("RECALL ONLINE — H1 BEGINS A HISTORY"),
+            "the feed should name the moment memory becomes possible"
+        );
+    }
+
+    #[test]
+    fn derived_life_moments_remain_in_tick_order_with_the_canonical_feed() {
+        let mut state = state(false);
+        let mut next = state.snapshot.clone();
+        next.humans
+            .get_mut(&HumanId(1))
+            .expect("the fixture learner exists")
+            .skills
+            .levels
+            .insert(
+                SkillId::Recall,
+                SkillState {
+                    xp: 100,
+                    learned: true,
+                },
+            );
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        state.snapshot.event_log.push(EventRecord {
+            tick: Tick(7),
+            seq: Seq(8),
+            author: EventAuthor::Engine,
+            subjects: vec![HumanId(1)],
+            payload: EventPayload::Deterministic(DeterministicKind::Maturation),
+            outcome: EventOutcome::NoOp,
+            narration: Some(String::from("a later event")),
+        });
+        state.focus = Panel::Feed;
+        let output = rendered_at(&state, 100, 18);
+        let recall = output
+            .find("RECALL ONLINE")
+            .expect("the Recall moment appears");
+        let later = output
+            .find("a later event")
+            .expect("the later event appears");
+        assert!(recall < later);
+    }
+
+    #[test]
+    fn a_death_that_removes_the_last_holder_names_the_lost_knowledge() {
+        let mut state = state(true);
+        let holder = state
+            .snapshot
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the fixture holder exists");
+        holder.skills.levels.insert(
+            SkillId::Medicine,
+            SkillState {
+                xp: 300,
+                learned: true,
+            },
+        );
+        let mut next = state.snapshot.clone();
+        let dead = next
+            .humans
+            .remove(&HumanId(1))
+            .expect("the holder can die in the fixture");
+        next.dead.insert(
+            HumanId(1),
+            DeadHuman {
+                id: dead.id,
+                generation: dead.lineage.generation,
+                birth_tick: dead.lineage.birth_tick,
+                death_tick: Tick(6),
+                lineage: dead.lineage,
+                skills: dead.skills,
+                positions: dead.positions,
+                social_bonds: dead.social_bonds,
+            },
+        );
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        assert!(rendered(&state).contains("KNOWLEDGE LOST — Medicine DIED WITH H1"));
+    }
+
+    #[test]
+    fn simultaneous_deaths_name_only_the_final_holder_as_the_loss_of_knowledge() {
+        let mut state = state(false);
+        for human in state.snapshot.humans.values_mut() {
+            human.skills.levels.clear();
+            human.skills.memories.clear();
+            human.skills.levels.insert(
+                SkillId::Medicine,
+                SkillState {
+                    xp: 300,
+                    learned: true,
+                },
+            );
+        }
+        let mut next = state.snapshot.clone();
+        for (seq, id) in [(Seq(1), HumanId(1)), (Seq(2), HumanId(2))] {
+            let dead = next
+                .humans
+                .remove(&id)
+                .expect("each fixture holder can die");
+            next.dead.insert(
+                id,
+                DeadHuman {
+                    id,
+                    generation: dead.lineage.generation,
+                    birth_tick: dead.lineage.birth_tick,
+                    death_tick: Tick(6),
+                    lineage: dead.lineage,
+                    skills: dead.skills,
+                    positions: dead.positions,
+                    social_bonds: dead.social_bonds,
+                },
+            );
+            next.event_log.push(EventRecord {
+                tick: Tick(6),
+                seq,
+                author: EventAuthor::Engine,
+                subjects: vec![id],
+                payload: EventPayload::Deterministic(DeterministicKind::HealthTick),
+                outcome: EventOutcome::NoOp,
+                narration: None,
+            });
+        }
+        next.tick = Tick(6);
+        state.update_snapshot(next, state.counters.clone());
+        let losses = state
+            .moments
+            .iter()
+            .filter_map(|moment| match moment {
+                app_state::PresentationMoment::KnowledgeLost { human, skills, .. } => {
+                    Some((*human, skills.clone()))
+                }
+                app_state::PresentationMoment::RecallLearned { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(losses, vec![(HumanId(2), vec![SkillId::Medicine])]);
+    }
+
+    #[test]
+    fn births_say_whether_they_begin_or_continue_a_lineage() {
+        let mut state = state(true);
+        let genome = state
+            .snapshot
+            .humans
+            .get(&HumanId(1))
+            .expect("the fixture parent exists")
+            .genome
+            .clone();
+        let mut founder = human(HumanId(3), true);
+        founder.lineage = Lineage::new(HumanId(3), None, None, 0, Tick(5));
+        let mut descendant = human(HumanId(4), true);
+        descendant.lineage =
+            Lineage::new(HumanId(4), Some(HumanId(1)), Some(HumanId(2)), 1, Tick(5));
+        state.snapshot.humans.insert(HumanId(3), founder);
+        state.snapshot.humans.insert(HumanId(4), descendant);
+        for (seq, child) in [(Seq(2), HumanId(3)), (Seq(3), HumanId(4))] {
+            state.snapshot.event_log.push(EventRecord {
+                tick: Tick(5),
+                seq,
+                author: EventAuthor::Engine,
+                subjects: vec![child],
+                payload: EventPayload::Deterministic(DeterministicKind::Maturation),
+                outcome: EventOutcome::Occurred(BTreeMap::from([(
+                    child,
+                    EffectSummary {
+                        seeded_genome: Some(genome.clone()),
+                        ..EffectSummary::default()
+                    },
+                )])),
+                narration: None,
+            });
+        }
+        let output = rendered(&state);
+        assert!(output.contains("H3 BEGINS A NEW LINEAGE"));
+        assert!(output.contains("H4 CONTINUES GENERATION 1"));
+    }
+
+    #[test]
+    fn the_inspector_reads_from_identity_through_memory_knowledge_bonds_and_events() {
+        let mut state = state(true);
+        state
+            .snapshot
+            .humans
+            .get_mut(&HumanId(1))
+            .expect("the selected human exists")
+            .social_bonds
+            .observed_competence
+            .insert(HumanId(2), 700);
+        let output = rendered(&state);
+        let identity = output.find("H1 ·").expect("identity is shown");
+        let memory = output.find("MEMORY").expect("memory status is shown");
+        let knowledge = output.find("KNOWLEDGE").expect("knowledge is shown");
+        let attachments = output.find("ATTACHMENTS").expect("attachments are shown");
+        let events = output.find("LIFE EVENTS").expect("life events are shown");
+        assert!(identity < memory);
+        assert!(memory < knowledge);
+        assert!(knowledge < attachments);
+        assert!(attachments < events);
+        assert!(output.contains("Learned among: H2"));
+    }
+
+    #[test]
+    fn an_amnesic_inspector_says_there_is_no_history_yet() {
+        assert!(rendered(&state(false)).contains("No history yet — Recall has not been learned."));
     }
 
     #[test]
