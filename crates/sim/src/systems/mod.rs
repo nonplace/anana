@@ -6,6 +6,7 @@ mod events;
 mod learning;
 mod logging_and_hash;
 mod mating;
+mod positions;
 mod virus_spread;
 
 pub(crate) use advance_clock::advance_clock;
@@ -17,4 +18,5 @@ pub(crate) use events::events;
 pub(crate) use learning::learning;
 pub(crate) use logging_and_hash::{build_snapshot, logging_and_hash};
 pub(crate) use mating::mating;
+pub(crate) use positions::positions;
 pub(crate) use virus_spread::virus_spread;

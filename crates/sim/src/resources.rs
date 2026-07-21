@@ -29,6 +29,7 @@ pub struct Config {
     pub mortality_interval: u64,
     pub requested_threads: usize,
     pub social_capacity: usize,
+    pub coalition_cost_enabled: bool,
     pub initial_virus: Virus,
 }
 
@@ -42,6 +43,7 @@ impl Default for Config {
             mortality_interval: 20,
             requested_threads: 1,
             social_capacity: anana_core::DEFAULT_SOCIAL_CAPACITY,
+            coalition_cost_enabled: true,
             initial_virus: Virus {
                 id: VirusId(1),
                 spreadscore: 18,

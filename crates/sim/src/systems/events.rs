@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, ChanceTemplate, Consciousness, EventAuthor, EventOutcome, EventPayload, Genome, GodId,
     HumanId, HumanState, Infection, InfectionPhase, Instincts, Lineage, Permille, Phenotype,
-    Residence, Skills, SocialBonds, WorldView, encode_experience_magnitude, exercised_skill,
-    learning_gain, record_defection, record_positive_interaction, resolve,
+    Positions, Residence, Skills, SocialBonds, WorldView, encode_experience_magnitude,
+    exercised_skill, learning_gain, record_defection, record_positive_interaction, resolve,
 };
 use bevy::prelude::{Commands, Entity, Query, Res, ResMut};
 
@@ -30,6 +30,7 @@ type EventHumanQuery<'w, 's> = Query<
         &'static mut Lineage,
         &'static Residence,
         &'static mut SocialBonds,
+        &'static Positions,
         Option<&'static Infection>,
     ),
 >;
@@ -65,6 +66,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                 lineage,
                 residence,
                 social_bonds,
+                positions,
                 infection,
             )| {
                 (
@@ -80,6 +82,7 @@ fn snapshot_humans(humans: &mut EventHumanQuery<'_, '_>) -> BTreeMap<HumanId, Hu
                         lineage: lineage.clone(),
                         residence: *residence,
                         social_bonds: social_bonds.clone(),
+                        positions: positions.clone(),
                         infection: infection.cloned(),
                     },
                 )
@@ -109,11 +112,11 @@ fn apply_outcome(
     };
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<BTreeMap<_, _>>();
     for (id, effect) in effects {
         if let Some(entity) = entities.get(id).copied() {
-            let Ok((_, _, _, _, _, consciousness, mut body, mut skills, _, _, _, _)) =
+            let Ok((_, _, _, _, _, consciousness, mut body, mut skills, _, _, _, _, _)) =
                 humans.get_mut(entity)
             else {
                 continue;
@@ -183,6 +186,7 @@ fn apply_outcome(
                     lineage: Lineage::new(allocated, None, None, 0, context.tick),
                     residence: Residence { id: residence_id },
                     social_bonds: SocialBonds::default(),
+                    positions: Positions::default(),
                 },
             );
             context.stats.births = context.stats.births.saturating_add(1);
@@ -233,13 +237,13 @@ fn record_shared_relationship(
     }
     let entities = humans
         .iter_mut()
-        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
+        .map(|(entity, id, _, _, _, _, _, _, _, _, _, _, _)| (*id, entity))
         .collect::<BTreeMap<_, _>>();
     for observer in subjects {
         let Some(entity) = entities.get(observer).copied() else {
             continue;
         };
-        let Ok((_, _, _, _, _, _, _, _, _, _, mut bonds, _)) = humans.get_mut(entity) else {
+        let Ok((_, _, _, _, _, _, _, _, _, _, mut bonds, _, _)) = humans.get_mut(entity) else {
             continue;
         };
         for other in subjects.iter().copied().filter(|other| other != observer) {
