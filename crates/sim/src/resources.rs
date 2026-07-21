@@ -29,6 +29,8 @@ pub struct Config {
     pub mortality_interval: u64,
     pub requested_threads: usize,
     pub social_capacity: usize,
+    pub innovation_skill: Option<anana_core::SkillId>,
+    pub innovation_external_rate: anana_core::Permille,
     pub initial_virus: Virus,
 }
 
@@ -42,6 +44,8 @@ impl Default for Config {
             mortality_interval: 20,
             requested_threads: 1,
             social_capacity: anana_core::DEFAULT_SOCIAL_CAPACITY,
+            innovation_skill: None,
+            innovation_external_rate: anana_core::Permille(3),
             initial_virus: Virus {
                 id: VirusId(1),
                 spreadscore: 18,

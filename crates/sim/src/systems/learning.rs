@@ -391,6 +391,21 @@ pub(crate) fn learning(
                 social_contacts.dedup_by_key(|other| other.id);
             }
             for other in social_contacts {
+                let interaction_probability = relationship_efforts
+                    .get(&observer.id)
+                    .and_then(|efforts| efforts.get(&other.id))
+                    .map_or(Permille(500), |effort| {
+                        Permille::clamp1000(i64::from(effort.0).saturating_mul(5) / 2)
+                    });
+                if !rng.0.gate(
+                    RngDomain::SocialInteraction,
+                    clock.0,
+                    observer.id,
+                    other.id.0,
+                    interaction_probability,
+                ) {
+                    continue;
+                }
                 let aversion = social_bonds
                     .rearing_aversions
                     .get(&other.id)
@@ -431,17 +446,31 @@ pub(crate) fn learning(
             if consciousness.awareness < min_awareness(skill) {
                 continue;
             }
-            let probability = Permille::clamp1000(
+            let normal_probability = Permille::clamp1000(
                 i64::from(affinity(skill, instincts).min(100)).saturating_mul(5)
                     + i64::from(consciousness.focus.min(100)).saturating_mul(5),
             );
-            if rng.0.gate(
-                RngDomain::SkillGain,
-                clock.0,
-                observer.id,
-                (index as u64).saturating_add(1),
-                probability,
-            ) {
+            let novel_for_observer =
+                config.innovation_skill == Some(skill) && observer.skills.level_of(skill) == 0;
+            let practises = if novel_for_observer {
+                clock.0.0.is_multiple_of(100)
+                    && rng.0.gate(
+                        RngDomain::SkillGain,
+                        clock.0,
+                        observer.id,
+                        (index as u64).saturating_add(10_000),
+                        config.innovation_external_rate,
+                    )
+            } else {
+                rng.0.gate(
+                    RngDomain::SkillGain,
+                    clock.0,
+                    observer.id,
+                    (index as u64).saturating_add(1),
+                    normal_probability,
+                )
+            };
+            if practises {
                 let _result = practise_skill(
                     &mut skills,
                     &consciousness,
@@ -459,7 +488,6 @@ pub(crate) fn learning(
                     .iter()
                     .filter(|model| {
                         model.id != observer.id
-                            && model.residence == observer.residence
                             && model.body.alive
                             && observer.social_bonds.bonds.contains_key(&model.id)
                             && model.skills.level_of(skill) > observer.skills.level_of(skill)
@@ -515,14 +543,13 @@ pub(crate) fn learning(
                     .iter()
                     .filter(|teacher| {
                         teacher.id != observer.id
-                            && teacher.residence == observer.residence
                             && teacher.body.alive
                             && observer.social_bonds.bonds.contains_key(&teacher.id)
                     })
                     .map(|teacher| {
                         let teacher_competence =
                             u16::from(teacher.skills.level_of(skill)).saturating_mul(20);
-                        let gain = teaching_gain(learner_competence, teacher_competence, 30);
+                        let gain = teaching_gain(learner_competence, teacher_competence, 60);
                         let effort = u32::from(
                             relationship_efforts
                                 .get(&observer.id)

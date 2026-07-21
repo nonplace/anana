@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anana_core::{
     Body, Consciousness, DiseaseAllele, EyeAllele, GenePair, Genome, God, GodId, HandAllele,
     HumanId, Infection, InfectionPhase, Instincts, LifeStage, Lineage, PolySublocus,
-    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillState, Skills,
-    SocialBonds, Tick, express,
+    PolygenicLocus, Residence, ResidenceId, Rng, SexAllele, SkillId, SkillMemory, SkillState,
+    Skills, SocialBonds, Tick, express,
 };
 use bevy::{
     app::ScheduleRunnerPlugin,
@@ -223,6 +223,8 @@ fn seed_founders(app: &mut App) {
     let count = app.world().resource::<Config>().initial_population;
     let seed = app.world().resource::<SimulationRng>().0;
     let initial_virus = app.world().resource::<Config>().initial_virus.clone();
+    let innovation_skill = app.world().resource::<Config>().innovation_skill;
+    let mut innovation_seeded = false;
     for index in 0..count {
         let residence_id = ResidenceId(u64::from(index / 25).saturating_add(1));
         let id = match app.world_mut().resource_mut::<NextHumanId>().allocate() {
@@ -253,7 +255,30 @@ fn seed_founders(app: &mut App) {
             social: 65_u8.saturating_sub((index % 25) as u8),
         };
         let consciousness = founder_consciousness(body.life_stage);
-        let skills = founder_skills(body.life_stage);
+        let mut skills = founder_skills(body.life_stage);
+        if !innovation_seeded
+            && innovation_skill.is_some()
+            && matches!(body.life_stage, LifeStage::Adult | LifeStage::Elder)
+        {
+            if let Some(skill) = innovation_skill {
+                skills.levels.insert(
+                    skill,
+                    SkillState {
+                        xp: 100,
+                        learned: true,
+                    },
+                );
+                skills.memories.insert(
+                    skill,
+                    SkillMemory {
+                        last_practiced: Some(Tick(0)),
+                        stability: 100,
+                        baseline_xp: 100,
+                    },
+                );
+                innovation_seeded = true;
+            }
+        }
         let lineage = Lineage::new(id, None, None, 0, Tick(0));
         let mut entity = app.world_mut().spawn((
             id,
