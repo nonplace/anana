@@ -26,6 +26,7 @@ dependencies = [
  "anana-tui",
  "anyhow",
  "clap",
+ "serde_json",
  "tokio",
 ]
 
@@ -64,6 +65,8 @@ dependencies = [
  "anana-core",
  "bevy",
  "cucumber",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tokio",
 ]
