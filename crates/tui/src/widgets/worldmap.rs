@@ -2,58 +2,69 @@ use anana_core::{InfectionPhase, LifeStage};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::Paragraph,
 };
 
-use crate::AppState;
+use crate::{
+    AppState,
+    palette::{DIVINE_AMBER, LIVE, STRUCTURE, panel},
+};
 
-fn stage_color(stage: LifeStage) -> Color {
+const CELL_WIDTH: u16 = 18;
+
+fn stage_glyph(stage: LifeStage) -> &'static str {
     match stage {
-        LifeStage::Infant => Color::LightMagenta,
-        LifeStage::Child => Color::LightBlue,
-        LifeStage::Adolescent => Color::LightGreen,
-        LifeStage::Adult => Color::Yellow,
-        LifeStage::Elder => Color::White,
+        LifeStage::Infant => "·",
+        LifeStage::Child => "○",
+        LifeStage::Adolescent => "◌",
+        LifeStage::Adult => "●",
+        LifeStage::Elder => "◍",
     }
 }
 
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let block = panel(" WORLD ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let columns = usize::from((inner.width / CELL_WIDTH).max(1));
     let entries = state
         .snapshot
         .humans
         .values()
         .map(|human| {
             let infection = match human.infection.as_ref().map(|infection| infection.phase) {
-                Some(InfectionPhase::Incubating) => "i",
-                Some(InfectionPhase::Infectious) => "X",
-                Some(InfectionPhase::Recovered) | None => "",
+                Some(InfectionPhase::Incubating) => " i",
+                Some(InfectionPhase::Infectious) => " X",
+                Some(InfectionPhase::Recovered) | None => "  ",
             };
             let low_health = if human.body.health.saturating_mul(4) < human.body.max_health {
                 "!"
             } else {
-                ""
+                " "
             };
-            let mut style = Style::default().fg(stage_color(human.body.life_stage));
+            let divine = state.is_divinely_touched(human.id);
+            let mut style = Style::default().fg(if divine { DIVINE_AMBER } else { LIVE });
             if state.selected == Some(human.id) {
                 style = style.add_modifier(Modifier::BOLD | Modifier::REVERSED);
+            } else if matches!(human.body.life_stage, LifeStage::Infant | LifeStage::Elder) {
+                style = style.fg(if divine { DIVINE_AMBER } else { STRUCTURE });
             }
             Span::styled(
                 format!(
-                    "●{}g{}{}{} ",
-                    human.id.0, human.lineage.generation, infection, low_health
+                    "{} H{:>4} g{:>2}{infection}{low_health} ",
+                    stage_glyph(human.body.life_stage),
+                    human.id.0,
+                    human.lineage.generation,
                 ),
                 style,
             )
         })
         .collect::<Vec<_>>();
     let lines = entries
-        .chunks(4)
+        .chunks(columns)
         .map(|row| Line::from(row.to_vec()))
         .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(" World / population map ")),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines), inner);
 }

@@ -1,4 +1,25 @@
-use anana_core::{EventRecord, GoshKind, HumanId, HumanState, WorldSnapshot};
+use std::collections::{BTreeMap, BTreeSet};
+
+use anana_core::{
+    DeterministicKind, EventOutcome, EventPayload, EventRecord, GoshKind, HumanId, HumanState,
+    SkillId, Tick, WorldSnapshot,
+};
+
+const SPLASH_FRAMES: u8 = 24;
+const MOMENT_LIMIT: usize = 128;
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum PresentationMoment {
+    RecallLearned {
+        tick: Tick,
+        human: HumanId,
+    },
+    KnowledgeLost {
+        tick: Tick,
+        human: HumanId,
+        skills: Vec<SkillId>,
+    },
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Panel {
@@ -41,6 +62,8 @@ pub struct AppState {
     pub counters: StatusCounters,
     pub paused: bool,
     pub mode: String,
+    splash_frames_remaining: u8,
+    pub(crate) moments: Vec<PresentationMoment>,
 }
 
 impl AppState {
@@ -58,10 +81,14 @@ impl AppState {
             counters,
             paused: false,
             mode: String::from("live"),
+            splash_frames_remaining: SPLASH_FRAMES,
+            moments: Vec::new(),
         }
     }
 
     pub fn update_snapshot(&mut self, snapshot: WorldSnapshot, counters: StatusCounters) {
+        self.capture_recall_transitions(&snapshot);
+        self.capture_knowledge_loss(&snapshot);
         self.snapshot = snapshot;
         self.counters = counters;
         if self
@@ -71,6 +98,123 @@ impl AppState {
             self.selected = self.snapshot.humans.keys().next().copied();
             self.narrative = None;
         }
+    }
+
+    fn capture_recall_transitions(&mut self, next: &WorldSnapshot) {
+        for (id, human) in &next.humans {
+            let learned_before = self
+                .snapshot
+                .humans
+                .get(id)
+                .is_some_and(|previous| previous.skills.recall_learned());
+            if !learned_before && human.skills.recall_learned() {
+                self.moments.push(PresentationMoment::RecallLearned {
+                    tick: next.tick,
+                    human: *id,
+                });
+            }
+        }
+        self.trim_moments();
+    }
+
+    fn capture_knowledge_loss(&mut self, next: &WorldSnapshot) {
+        let removed = self
+            .snapshot
+            .humans
+            .iter()
+            .filter(|(id, _)| !next.humans.contains_key(id))
+            .collect::<BTreeMap<_, _>>();
+        let potentially_lost = removed
+            .values()
+            .flat_map(|human| {
+                human
+                    .skills
+                    .levels
+                    .iter()
+                    .filter_map(|(skill, state)| state.learned.then_some(*skill))
+            })
+            .filter(|skill| {
+                !next.humans.values().any(|survivor| {
+                    survivor
+                        .skills
+                        .levels
+                        .get(skill)
+                        .is_some_and(|state| state.learned)
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        let death_sequence = |human: HumanId| {
+            next.event_log
+                .iter()
+                .filter(|record| {
+                    record.tick == next.tick
+                        && matches!(
+                            record.payload,
+                            EventPayload::Deterministic(DeterministicKind::HealthTick)
+                        )
+                        && record.subjects.contains(&human)
+                })
+                .map(|record| record.seq.0)
+                .max()
+                .unwrap_or(0)
+        };
+        let mut losses = BTreeMap::<HumanId, Vec<SkillId>>::new();
+        for skill in potentially_lost {
+            let last_holder = removed
+                .iter()
+                .filter(|(_, human)| {
+                    human
+                        .skills
+                        .levels
+                        .get(&skill)
+                        .is_some_and(|state| state.learned)
+                })
+                .max_by_key(|(id, _)| (death_sequence(***id), ***id));
+            if let Some((id, _)) = last_holder {
+                losses.entry(**id).or_default().push(skill);
+            }
+        }
+        for (human, skills) in losses {
+            self.moments.push(PresentationMoment::KnowledgeLost {
+                tick: next.tick,
+                human,
+                skills,
+            });
+        }
+        self.trim_moments();
+    }
+
+    fn trim_moments(&mut self) {
+        let excess = self.moments.len().saturating_sub(MOMENT_LIMIT);
+        if excess > 0 {
+            self.moments.drain(..excess);
+        }
+    }
+
+    #[must_use]
+    pub fn splash_visible(&self) -> bool {
+        self.splash_frames_remaining > 0
+    }
+
+    pub fn dismiss_splash(&mut self) {
+        self.splash_frames_remaining = 0;
+    }
+
+    pub fn advance_splash(&mut self) {
+        self.splash_frames_remaining = self.splash_frames_remaining.saturating_sub(1);
+    }
+
+    #[must_use]
+    pub fn is_divinely_touched(&self, human: HumanId) -> bool {
+        self.snapshot.event_log.iter().rev().any(|record| {
+            record.tick == self.snapshot.tick
+                && record.author == anana_core::EventAuthor::God
+                && (record.subjects.contains(&human)
+                    || matches!(
+                        &record.outcome,
+                        EventOutcome::Occurred(effects) if effects.contains_key(&human)
+                    ))
+        })
     }
 
     #[must_use]

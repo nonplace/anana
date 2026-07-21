@@ -1,4 +1,5 @@
 mod cli;
+mod counterfactual_view;
 mod driver;
 mod terminal;
 
@@ -7,6 +8,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use cli::{Cli, Command, CounterfactualArgs, RunMode};
+use counterfactual_view::format_counterfactual;
 use driver::{hash_hex, run_headless, run_live, run_replay};
 
 fn select_mind(force_offline: bool) -> AnyMind {
@@ -40,7 +42,7 @@ fn run_counterfactual_command(args: CounterfactualArgs) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&comparison)?);
     } else {
-        println!("{comparison}");
+        print!("{}", format_counterfactual(&comparison));
     }
     Ok(())
 }
