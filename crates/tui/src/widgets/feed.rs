@@ -1,4 +1,7 @@
-use anana_core::{DeterministicKind, EventAuthor, EventOutcome, EventPayload, HumanId, SkillId};
+use anana_core::{
+    Bane, Boon, ChanceTemplate, DeterministicKind, EventAuthor, EventOutcome, EventPayload,
+    EventRecord, GoshKind, GoshTarget, HumanId,
+};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -13,28 +16,13 @@ use crate::{
     palette::{DIVINE_AMBER, HISTORICAL, LIVE, STRUCTURE, panel},
 };
 
-fn is_birth(record: &anana_core::EventRecord) -> Option<HumanId> {
+fn is_birth(record: &EventRecord) -> Option<HumanId> {
     let EventOutcome::Occurred(effects) = &record.outcome else {
         return None;
     };
     effects
         .iter()
         .find_map(|(id, effect)| effect.seeded_genome.is_some().then_some(*id))
-}
-
-fn is_recall_moment(record: &anana_core::EventRecord, state: &AppState) -> Option<HumanId> {
-    let EventOutcome::Occurred(effects) = &record.outcome else {
-        return None;
-    };
-    effects.iter().find_map(|(id, effect)| {
-        let grants_recall = effect.skill_xp.contains_key(&SkillId::Recall);
-        let recall_is_online = state
-            .snapshot
-            .humans
-            .get(id)
-            .is_some_and(|human| human.skills.recall_learned());
-        (grants_recall && recall_is_online).then_some(*id)
-    })
 }
 
 fn birth_description(child: HumanId, state: &AppState) -> String {
@@ -45,56 +33,175 @@ fn birth_description(child: HumanId, state: &AppState) -> String {
         .map(|human| &human.lineage)
         .or_else(|| state.snapshot.dead.get(&child).map(|human| &human.lineage));
     match lineage {
-        Some(lineage) if lineage.generation == 0 => {
-            format!("BIRTH — H{} BEGINS A NEW LINEAGE", child.0)
-        }
-        Some(lineage) => format!(
-            "BIRTH — H{} CONTINUES GENERATION {}",
-            child.0, lineage.generation
-        ),
-        None => format!("BIRTH — H{}", child.0),
+        Some(lineage) if lineage.generation == 0 => format!("H{} began a new lineage", child.0),
+        Some(lineage) => match (lineage.mother, lineage.father) {
+            (Some(mother), Some(father)) => {
+                format!("H{} was born to H{} and H{}", child.0, mother.0, father.0)
+            }
+            _ => format!(
+                "H{} was born into generation {}",
+                child.0, lineage.generation
+            ),
+        },
+        None => format!("H{} was born", child.0),
     }
 }
 
-pub(super) fn description(record: &anana_core::EventRecord, state: &AppState) -> String {
+fn joined_humans(ids: &[HumanId]) -> String {
+    match ids {
+        [] => String::from("someone"),
+        [only] => format!("H{}", only.0),
+        [first, second] => format!("H{} and H{}", first.0, second.0),
+        _ => {
+            let mut names = ids
+                .iter()
+                .map(|id| format!("H{}", id.0))
+                .collect::<Vec<_>>();
+            let last = names.pop().unwrap_or_else(|| String::from("someone"));
+            format!("{} and {last}", names.join(", "))
+        }
+    }
+}
+
+fn affected_humans(record: &EventRecord) -> Vec<HumanId> {
+    match &record.outcome {
+        EventOutcome::Occurred(effects) if !effects.is_empty() => effects.keys().copied().collect(),
+        EventOutcome::Occurred(_) | EventOutcome::NoOp => record.subjects.clone(),
+    }
+}
+
+fn infected_human(record: &EventRecord) -> Option<HumanId> {
+    let EventOutcome::Occurred(effects) = &record.outcome else {
+        return None;
+    };
+    effects
+        .iter()
+        .find_map(|(id, effect)| effect.infection.is_some().then_some(*id))
+}
+
+fn is_death(record: &EventRecord, state: &AppState) -> Option<HumanId> {
+    if !matches!(
+        record.payload,
+        EventPayload::Deterministic(DeterministicKind::HealthTick)
+    ) {
+        return None;
+    }
+    record.subjects.first().copied().filter(|id| {
+        state
+            .snapshot
+            .dead
+            .get(id)
+            .is_some_and(|dead| dead.death_tick == record.tick)
+    })
+}
+
+fn gosh_description(kind: &GoshKind, record: &EventRecord) -> String {
+    match kind {
+        GoshKind::Bless {
+            subject,
+            boon: Boon::Heal(_),
+        } => format!("God healed H{}", subject.0),
+        GoshKind::Bless {
+            subject,
+            boon: Boon::Fertility(_),
+        } => format!("God blessed H{} with fertility", subject.0),
+        GoshKind::Bless {
+            subject,
+            boon: Boon::GrantImmunity(virus),
+        } => format!("God granted H{} immunity to V{}", subject.0, virus.0),
+        GoshKind::Afflict {
+            target,
+            bane: Bane::Harm(_),
+        } => match target {
+            GoshTarget::One(human) => format!("God harmed H{}", human.0),
+            GoshTarget::Lineage(root) => format!("God harmed H{}'s lineage", root.0),
+            GoshTarget::All => String::from("God harmed everyone"),
+        },
+        GoshKind::Afflict {
+            target,
+            bane: Bane::Infect(virus),
+        } => match target {
+            GoshTarget::One(human) => format!("God made H{} ill with V{}", human.0, virus.0),
+            GoshTarget::Lineage(root) => {
+                format!("God spread V{} through H{}'s lineage", virus.0, root.0)
+            }
+            GoshTarget::All => format!("God spread V{} through the world", virus.0),
+        },
+        GoshKind::Teach { subject, skill, .. } => {
+            format!("God taught H{} {}", subject.0, super::skill_name(*skill))
+        }
+        GoshKind::Seed { .. } => is_birth(record).map_or_else(
+            || String::from("God seeded a new life"),
+            |child| format!("God seeded H{} as a new life", child.0),
+        ),
+    }
+}
+
+fn chance_description(template: ChanceTemplate, record: &EventRecord) -> String {
+    if let Some(target) = infected_human(record) {
+        let source = record
+            .subjects
+            .iter()
+            .copied()
+            .find(|subject| *subject != target);
+        return source.map_or_else(
+            || format!("H{} fell ill", target.0),
+            |source| format!("H{} fell ill after contact with H{}", target.0, source.0),
+        );
+    }
+    let people = joined_humans(&affected_humans(record));
+    match template {
+        ChanceTemplate::Accident => format!("{people} survived an accident"),
+        ChanceTemplate::Discovery => format!("{people} made a discovery"),
+        ChanceTemplate::Conflict => format!("{people} faced a conflict"),
+        ChanceTemplate::Windfall => format!("{people} found an unexpected windfall"),
+    }
+}
+
+pub(super) fn is_visible(record: &EventRecord, state: &AppState) -> bool {
+    if record.narration.is_some() || record.author == EventAuthor::God {
+        return true;
+    }
+    if is_birth(record).is_some() || is_death(record, state).is_some() {
+        return true;
+    }
+    matches!(
+        (&record.payload, &record.outcome),
+        (EventPayload::Chance { .. }, EventOutcome::Occurred(effects)) if !effects.is_empty()
+    ) || (record.author == EventAuthor::Ai && matches!(record.outcome, EventOutcome::Occurred(_)))
+}
+
+pub(super) fn description(record: &EventRecord, state: &AppState) -> String {
     if let Some(narration) = &record.narration {
         return narration.clone();
     }
-    if let Some(human) = is_recall_moment(record, state) {
-        return format!("RECALL ONLINE — H{} BEGINS A HISTORY", human.0);
+    if let EventPayload::Gosh(kind) = &record.payload {
+        return gosh_description(kind, record);
     }
     if let Some(child) = is_birth(record) {
         return birth_description(child, state);
     }
-    if matches!(
-        record.payload,
-        EventPayload::Deterministic(DeterministicKind::HealthTick)
-    ) && record
-        .subjects
-        .first()
-        .is_some_and(|id| state.snapshot.dead.contains_key(id))
-    {
-        return record
-            .subjects
-            .first()
-            .map_or_else(|| String::from("DEATH"), |id| format!("DEATH — H{}", id.0));
+    if let Some(human) = is_death(record, state) {
+        return format!("H{} died", human.0);
     }
     match &record.payload {
-        EventPayload::Chance { template, .. } => format!("{template:?}"),
-        EventPayload::Deterministic(kind) => format!("{kind:?}"),
-        EventPayload::Gosh(kind) => format!("{kind:?}"),
+        EventPayload::Chance { template, .. } => chance_description(*template, record),
+        EventPayload::Gosh(kind) => gosh_description(kind, record),
+        EventPayload::Deterministic(_) if record.author == EventAuthor::Ai => {
+            format!("AI changed {}", joined_humans(&affected_humans(record)))
+        }
+        EventPayload::Deterministic(_) => String::from("The world changed"),
     }
 }
 
-fn record_line(record: &anana_core::EventRecord, state: &AppState) -> Line<'static> {
-    let prefix = format!(
-        "t{:>6} s{:>4} {:<6} ",
-        record.tick.0,
-        record.seq.0,
-        format!("{:?}", record.author)
-    );
+fn record_line(record: &EventRecord, state: &AppState) -> Line<'static> {
+    let author = match record.author {
+        EventAuthor::Engine => "WORLD",
+        EventAuthor::Ai => "AI",
+        EventAuthor::God => "GOD",
+    };
+    let prefix = format!("t{:>6} s{:>4} {:<6} ", record.tick.0, record.seq.0, author,);
     let divine = record.author == EventAuthor::God;
-    let recall = is_recall_moment(record, state).is_some();
     let prefix_style = if divine {
         Style::default()
             .fg(DIVINE_AMBER)
@@ -104,10 +211,6 @@ fn record_line(record: &anana_core::EventRecord, state: &AppState) -> Line<'stat
     };
     let detail_style = if divine {
         Style::default().fg(DIVINE_AMBER)
-    } else if recall {
-        Style::default()
-            .fg(LIVE)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
     } else {
         Style::default().fg(HISTORICAL)
     };
@@ -121,7 +224,7 @@ fn moment_line(moment: &PresentationMoment) -> Line<'static> {
     match moment {
         PresentationMoment::RecallLearned { tick, human } => Line::styled(
             format!(
-                "t{:>6}        RECALL ONLINE — H{} BEGINS A HISTORY",
+                "t{:>6}        H{} learned Recall and can now remember",
                 tick.0, human.0
             ),
             Style::default()
@@ -135,32 +238,56 @@ fn moment_line(moment: &PresentationMoment) -> Line<'static> {
         } => {
             let names = skills
                 .iter()
-                .map(|skill| format!("{skill:?}"))
+                .map(|skill| super::skill_name(*skill))
                 .collect::<Vec<_>>()
                 .join(", ");
             Line::styled(
                 format!(
-                    "t{:>6}        KNOWLEDGE LOST — {} DIED WITH H{}",
-                    tick.0, names, human.0
+                    "t{:>6}        H{} died; {} was lost",
+                    tick.0, human.0, names
                 ),
                 Style::default().fg(LIVE).add_modifier(Modifier::BOLD),
             )
         }
+        PresentationMoment::Recovered { tick, human, virus } => Line::styled(
+            format!(
+                "t{:>6}        H{} recovered from illness V{}",
+                tick.0, human.0, virus.0
+            ),
+            Style::default().fg(HISTORICAL),
+        ),
+        PresentationMoment::BondFormed {
+            tick,
+            first,
+            second,
+        } => Line::styled(
+            format!(
+                "t{:>6}        H{} and H{} formed a bond",
+                tick.0, first.0, second.0
+            ),
+            Style::default().fg(HISTORICAL),
+        ),
     }
 }
 
 fn moment_key(moment: &PresentationMoment) -> (u64, u64) {
     let tick = match moment {
         PresentationMoment::RecallLearned { tick, .. }
-        | PresentationMoment::KnowledgeLost { tick, .. } => tick.0,
+        | PresentationMoment::KnowledgeLost { tick, .. }
+        | PresentationMoment::Recovered { tick, .. }
+        | PresentationMoment::BondFormed { tick, .. } => tick.0,
     };
     (tick, u64::MAX)
 }
 
-fn moment_human(moment: &PresentationMoment) -> HumanId {
+fn moment_names_human(moment: &PresentationMoment, selected: HumanId) -> bool {
     match moment {
         PresentationMoment::RecallLearned { human, .. }
-        | PresentationMoment::KnowledgeLost { human, .. } => *human,
+        | PresentationMoment::KnowledgeLost { human, .. }
+        | PresentationMoment::Recovered { human, .. } => *human == selected,
+        PresentationMoment::BondFormed { first, second, .. } => {
+            *first == selected || *second == selected
+        }
     }
 }
 
@@ -168,6 +295,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let mut entries = state
         .visible_events()
         .into_iter()
+        .filter(|record| is_visible(record, state))
         .map(|record| {
             (
                 (record.tick.0, u64::from(record.seq.0)),
@@ -183,7 +311,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 !state.feed_selected_only
                     || state
                         .selected
-                        .is_some_and(|selected| selected == moment_human(moment))
+                        .is_some_and(|selected| moment_names_human(moment, selected))
             })
             .map(|moment| (moment_key(moment), moment_line(moment))),
     );
@@ -197,10 +325,10 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     } else {
         "ALL"
     };
-    frame.render_widget(
-        Paragraph::new(lines)
-            .scroll((state.feed_scroll, 0))
-            .block(panel(format!(" EVENTS · {filter} "))),
-        area,
-    );
+    let block = panel(format!(" EVENTS · {filter} "));
+    let visible_height = usize::from(block.inner(area).height.max(1));
+    let tail = lines.len().saturating_sub(visible_height);
+    let back = usize::from(state.feed_scroll).min(tail);
+    let offset = u16::try_from(tail.saturating_sub(back)).unwrap_or(u16::MAX);
+    frame.render_widget(Paragraph::new(lines).scroll((offset, 0)).block(block), area);
 }

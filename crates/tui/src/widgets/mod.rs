@@ -16,6 +16,65 @@ use crate::{
     palette::{BACKGROUND, DIVINE_AMBER, HISTORICAL, LIVE, STRUCTURE, divine_panel},
 };
 
+pub(super) const fn skill_name(skill: anana_core::SkillId) -> &'static str {
+    match skill {
+        anana_core::SkillId::Recall => "Recall",
+        anana_core::SkillId::Motor => "Movement",
+        anana_core::SkillId::Language => "Language",
+        anana_core::SkillId::Foraging => "Foraging",
+        anana_core::SkillId::ToolUse => "Tool use",
+        anana_core::SkillId::SocialBond => "Social bonds",
+        anana_core::SkillId::Farming => "Farming",
+        anana_core::SkillId::Medicine => "Medicine",
+        anana_core::SkillId::Planning => "Planning",
+    }
+}
+
+fn gosh_presentation(
+    form: &crate::GoshForm,
+    selected: Option<anana_core::HumanId>,
+) -> (&'static str, String, String) {
+    use anana_core::{Bane, Boon, GoshKind, GoshTarget};
+
+    match &form.draft {
+        GoshKind::Bless { subject, boon } => {
+            let effect = match boon {
+                Boon::Heal(amount) => format!("Restore {amount} health."),
+                Boon::Fertility(amount) => format!("Raise fertility by {amount}."),
+                Boon::GrantImmunity(virus) => {
+                    format!("Grant immunity to virus V{}.", virus.0)
+                }
+            };
+            ("Blessing", format!("H{}", subject.0), effect)
+        }
+        GoshKind::Afflict { target, bane } => {
+            let target = match target {
+                GoshTarget::One(human) => format!("H{}", human.0),
+                GoshTarget::Lineage(root) => format!("the lineage of H{}", root.0),
+                GoshTarget::All => String::from("everyone living"),
+            };
+            let effect = match bane {
+                Bane::Harm(amount) => format!("Remove {amount} health."),
+                Bane::Infect(virus) => format!("Cause infection with virus V{}.", virus.0),
+            };
+            ("Affliction", target, effect)
+        }
+        GoshKind::Teach { subject, skill, xp } => (
+            "Teaching",
+            format!("H{}", subject.0),
+            format!("Teach {} with {xp} experience.", skill_name(*skill)),
+        ),
+        GoshKind::Seed { .. } => (
+            "Seed a life",
+            String::from("a newborn"),
+            selected.map_or_else(
+                || String::from("Create a newborn with the chosen genome."),
+                |human| format!("Create a newborn with H{}'s genome.", human.0),
+            ),
+        ),
+    }
+}
+
 const SPLASH_MIN_WIDTH: u16 = 64;
 const SPLASH_MIN_HEIGHT: u16 = 9;
 const COMPACT_WIDTH: u16 = 72;
@@ -160,7 +219,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     if let Some(form) = &state.gosh_form {
         let full = frame.area();
         let width = full.width.saturating_sub(4).min(76);
-        let height = 9_u16.min(full.height.saturating_sub(2));
+        let height = 13_u16.min(full.height.saturating_sub(2));
         let modal = Rect {
             x: full.x.saturating_add(full.width.saturating_sub(width) / 2),
             y: full
@@ -170,14 +229,26 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
             height,
         };
         frame.render_widget(Clear, modal);
+        let (choice, target, effect) = gosh_presentation(form, state.selected);
         let body = vec![
+            Line::raw("Your one power over this world: one permanent, recorded decree."),
+            Line::raw(""),
             Line::from(vec![
-                Span::styled("DECREE  ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(format!("{:?}", form.draft)),
+                Span::raw("CHOICE    "),
+                Span::styled(choice, Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::raw("TARGET    "),
+                Span::styled(target, Style::default().add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::raw("EFFECT    "),
+                Span::styled(effect, Style::default().add_modifier(Modifier::BOLD)),
             ]),
             Line::raw(""),
-            Line::raw("b bless · a afflict · t teach · s seed · f fertility · i immunity"),
-            Line::raw("+/- magnitude · l target · Enter confirm · Esc cancel"),
+            Line::raw("b blessing: heal   f blessing: fertility   i blessing: immunity"),
+            Line::raw("a affliction: harm  t teaching: Recall     s seed a new life"),
+            Line::raw("+/- amount   l change affliction target   Enter cast   Esc cancel"),
         ];
         frame.render_widget(
             Paragraph::new(body)
