@@ -5,8 +5,9 @@
 AnanA is a deterministic, tick-driven simulation of human life, written in
 Rust. Every human is governed by the same interacting systems: diploid genes,
 expressed traits, heritable instincts, developing consciousness, recall-gated
-learning, ageing, mating, infection, and death. No individual life is scripted;
-it emerges from the mechanics.
+learning, social bonds, conferred prestige, anonymous positions, ageing, mating,
+infection, and death. No individual life is scripted; it emerges from the
+mechanics.
 
 You watch the world in **gosh-mode**, as a god whose only way to change it is a
 recorded divine decree. Read the name forwards or backwards and it is the same.
@@ -38,7 +39,7 @@ cargo run --release -p anana -- --mode headless --offline --seed 42 --ticks 500
 That command currently prints one canonical line:
 
 ```text
-hash=63ceb9587ccdbf999028642e576a2204aac49a7449bbed35802d3cea8cf9bd01 tick=500 living=124 births=82 deaths=38 infections=86 generation=1 lineages=57 lived=162 faults=0
+hash=21346ff0615d57a7fda12593494d2242979e3c721b25a2bfd11717e6f4061602 tick=500 living=120 births=78 deaths=38 infections=86 generation=1 lineages=57 lived=158 faults=0
 ```
 
 Prove determinism with two commands. The first compares two seed-42 runs; the
@@ -53,11 +54,69 @@ No sample data is needed because **the seed is the data**. There is no database,
 fixture import, or world file to download. The seed and built-in configuration
 create the founders and initial virus; the tick loop produces the rest.
 
+## Counterfactuals: what did one decree cost?
+
+The counterfactual command runs one world to a chosen instant, branches it, and
+projects two futures to the same horizon: one untouched and one receiving exactly
+one gosh. People alive at the split retain the same identity in both futures, so
+their fates can be compared directly. People born later have branch-scoped
+identities and are compared only in aggregate; the program never pretends that
+two post-branch births are the same person.
+
+This quick example kills founder H1 at tick 20 in a deliberately small world:
+
+```bash
+cargo run --release -p anana -- counterfactual --seed 42 --branch-at 20 --horizon 80 --initial-population 12 --carrying-capacity 40 --gosh '{"Afflict":{"target":{"One":1},"bane":{"Harm":65535}}}'
+```
+
+The real output, with terminal colours removed here, is:
+
+```text
+A n a n A · COUNTERFACTUAL
+seed 42 · branch t20 · horizon t80 · branch hash 58f346a4573e0b293a79835d16321996084f2c7b3c5fe9c8c12b45fa2ecc4aa8
+decree · Afflict { target: One(HumanId(1)), bane: Harm(65535) }
+
+UNTOUCHED                                        │ DECREED
+hash 3328d7ee1ee7ffac97d6aefbe3a3a7a6            │ hash 52088e1770ccd60edf57636f7885523c
+     b3974487f066380b0c084123833ad246            │      2f094686246984221f7d2302ce11aac5
+living                  13                       │ living                  12
+births after branch      3                       │ births after branch      3
+deaths after branch      1                       │ deaths after branch      2
+surviving lineages      10                       │ surviving lineages       9
+knowledge held           9                       │ knowledge held           9
+
+WHAT THE DECREE CHANGED
+DIED WHO OTHERWISE LIVED              1
+NEVER BORN                            0
+LINEAGES ENDED                        1
+KNOWLEDGE LOST                        0
+
+PEOPLE ALIVE AT THE BRANCH
+H1 · alive · age 93 ticks                        │ H1 · died t21 · age 34 ticks
+
+AFTER THE BRANCH · AGGREGATES ONLY
+lineages surviving here: H1                      │ the same lineages are extinct
+lives unique here: none                          │ additional lives here: none
+knowledge surviving here: none                   │ knowledge unique here: none
+
+This compares two runs of a model; it is not a claim about real people.
+```
+
+The identity of that result is the seed, branch-world hash, decree, and horizon.
+The untouched continuation is tested against an unbranched run, and repeating the
+same request is byte-identical. Add `--json` to emit the complete comparison as
+structured data. The `--gosh` value is the same canonical gosh object used by the
+dashboard, not a second command-only format.
+
 ## Command-line interface
 
 ```text
 anana [--seed <SEED>] [--ticks <TICKS>] [--mode <live|replay|headless>] [--offline]
       [--initial-population <N>] [--carrying-capacity <N>] [--mating-interval <N>]
+
+anana counterfactual --seed <SEED> --branch-at <TICK> --horizon <TICK>
+      --gosh <CANONICAL_JSON> [--json] [--initial-population <N>]
+      [--carrying-capacity <N>] [--mating-interval <N>]
 ```
 
 | Flag | Meaning | Default |
@@ -121,6 +180,46 @@ infect, while spreadscore 100 cannot be resisted. Recovered humans gain immunity
 to that `VirusId`; v1 uses one strain per virus identifier and does not create new
 strains.
 
+### Positions are socially costly
+
+Each remembering human can hold eight anonymous positions from -1000 to +1000.
+The slots have no topics: the engine never knows what slot three means. When
+contradicting information arrives, retained evidence pulls a position toward it,
+while attachment to people who agree makes changing socially expensive. If that
+social cost is larger, the person moves away from the evidence. Genes never write
+a position; children acquire none until Recall lets them retain information.
+
+That local rule produced a mean position spread of **814.496** with coalition
+cost, against **14.396** in the same seed with coalition cost disabled. The normal
+world contained **474 negative, 272 middle, and 426 positive** held positions;
+the control contained **0 negative, 803 middle, and 0 positive**. No rule anywhere
+mentions polarisation, camps, or a preferred position.
+
+In a separate contradiction burst, **68 humans moved away** from strong opposing
+information and **9 moved toward it**. The people who moved away had far more
+attachment to people already aligned with them: mean summed attachment 24,623.0,
+against 1,123.4 among those who moved toward the information.
+
+### Inherited perception, not inherited opinions
+
+Two additive diploid loci are expressed once at birth as gains between 500 and
+1500 parts per thousand. Threat salience scales only the encoding of bad
+experience before Recall; novelty tolerance scales only attention to unfamiliar,
+non-kin people with whom attachment is weak. Neither locus touches a position,
+preference, or value.
+
+Across five paired seeds, the threat-allele distribution moved **0.0504** farther
+with virus pressure than without it. Repeating the comparison with the locus fixed
+at the population median produced **0.0000**, the logging control. This is an
+observed association inside the model, not a calibrated claim about human biology.
+
+The inheritance diagnostic also found no non-genetic transmission path. Novelty
+tolerance was almost uncorrelated between partners (`r = 0.035`, or `0.062` when
+weighted by births), while its parent-to-offspring regression slope was `0.562`.
+The larger Pearson correlation (`r = 0.656`) is therefore best explained by the
+unequal parent and child variance of the finite founder-derived cohort, with
+selection still able to contribute—not by perceptual assortment or copied traits.
+
 ## Determinism
 
 **Same seed, configuration, and recorded authored events: same trajectory, tick
@@ -151,6 +250,40 @@ not only the final state. Golden regression tests also pin one keyed draw and on
 fully populated world hash, making dependency-stream or serialization-layout
 changes fail loudly.
 
+## Minimum viable population
+
+There is no minimum population constant or survival threshold in the code. In a
+3,000-tick experiment over seeds 41, 42, and 43, **30 founders collapsed to 1,
+3, and 2 living humans**, **32 remained nonzero in two of three runs** (172, 0,
+and 9), and **36 survived in all three** with 205, 195, and 197 living humans;
+all three 36-founder runs reached five generations. The boundary falls out of
+time to fertility racing age-structured mortality and the encounter rate needed
+for courtship. It is an observed range for this configuration, not a universal
+biological number, and “collapsed” is not quietly reported as literal extinction.
+
+## Predictions the model got wrong
+
+Two preregistered expectations were weaker or reversed, and they remain visible
+rather than being tuned away:
+
+- Partner traits followed the predicted broad ordering, but the middle classes
+  did not separate into convincing distinct bands: the correlations were 0.592,
+  0.254, 0.232, 0.215, and 0.162, with desirability at 0.709. The long-run test is
+  ignored by default for runtime, and when run explicitly it passes its current
+  broad assertions. We report that plainly rather than calling a passing test a
+  failure or tightening weights until the gaps look impressive.
+- Humans with more relationships changed their positions **more**, not less, over
+  their lifetimes. The measured regression slope was **+52.410** across 364
+  humans, opposite the predicted negative sign. We left the mechanism and result
+  intact because forcing the sign would erase the finding we asked the model to
+  test.
+
+The skill system can represent loss when the last holder dies without teaching,
+and counterfactual comparisons report whether either future still has a living
+holder. But no skill has gone permanently extinct in any measured run: with nine
+skills and well over a hundred living humans, somebody has always retained each
+one. Implemented possibility and observed result are different claims.
+
 ## Tests and executable specifications
 
 Run the full network-free workspace suite:
@@ -174,8 +307,10 @@ thread count, gosh replay, UI purity, offline-mind determinism, model-output
 validation, and CLI defaults. Model-client tests use canned JSON; no test contacts
 the API.
 
-Ten Given/When/Then feature files execute through `cucumber` as living,
-non-technical documentation:
+The default suite executes **206 Rust tests** plus **51 scenarios** from **13
+Given/When/Then feature files**. Seven additional long-running statistical tests
+are present but ignored by default. The feature files are living, non-technical
+documentation:
 
 | Feature | What it proves |
 |---|---|
@@ -189,6 +324,9 @@ non-technical documentation:
 | `social_learning.feature` | Lived experience, four-stage observation, targeted teaching, forgetting, spacing, and retrieval |
 | `bonds_and_courtship.feature` | Attachment builds with diminishing returns, betrayal wounds deeper than one kindness repairs, and courtship needs mutual attachment |
 | `prestige_and_coalitions.feature` | Standing is conferred by followers rather than seized, relationships are bounded, and large groups reorganise |
+| `counterfactual.feature` | A branch leaves its untouched future unchanged, an empty decree changes nothing, and the same comparison reproduces byte for byte |
+| `perceptual_gains.feature` | Inherited gains alter threat encoding and unfamiliar attention without writing opinions |
+| `positions.feature` | Recall gates anonymous positions and social cost can make contradiction backfire |
 
 For example, this documentation is executable:
 
@@ -211,11 +349,11 @@ AnanA is a functional core inside an imperative shell, split into five crates:
 
 | Crate | Responsibility |
 |---|---|
-| `anana-core` | Pure domain: ids, keyed RNG, genetics, phenotype, skills, virus probability, events, goshes, canonical snapshot, and hash |
-| `anana-sim` | Headless Bevy ECS: resources, founder seeding, ordered tick systems, event intake/log, snapshots, and replay |
+| `anana-core` | Pure domain: ids, keyed RNG, genetics, perception, skills, bonds, prestige, positions, events, goshes, canonical snapshot, and hash |
+| `anana-sim` | Headless Bevy ECS: founder seeding, ordered tick systems, social interaction, event intake/log, snapshots, replay, and counterfactual projection |
 | `anana-mind` | GPT-5.6 boundary, deterministic offline mind, prompt summaries, structured response parsing, and validation |
 | `anana-tui` | ratatui presentation and input intents; no simulation rules |
-| `anana` | Thin CLI binary that selects a mind and wires live, replay, and headless drivers |
+| `anana` | Thin CLI binary that selects a mind and wires live, replay, headless, and counterfactual drivers |
 
 Dependency direction is deliberately one-way:
 
