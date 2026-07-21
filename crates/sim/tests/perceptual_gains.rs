@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use anana_core::{
-    Genome, Infection, NoveltyToleranceAllele, PerceptualGain, Phenotype, SkillId,
-    ThreatSalienceAllele,
+    Genome, Infection, NoveltyToleranceAllele, PerceptualGain, Phenotype, Rng, SkillId,
+    ThreatSalienceAllele, express,
 };
 use anana_sim::{Config, build_headless_app, snapshot, step};
 
@@ -103,6 +103,24 @@ fn pearson(samples: &[(f64, f64)]) -> Option<f64> {
     (denominator > 0.0).then_some(numerator / denominator)
 }
 
+fn regression_slope(samples: &[(f64, f64)]) -> Option<f64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let count = samples.len() as f64;
+    let mean_x = samples.iter().map(|(x, _)| x).sum::<f64>() / count;
+    let mean_y = samples.iter().map(|(_, y)| y).sum::<f64>() / count;
+    let covariance = samples
+        .iter()
+        .map(|(x, y)| (x - mean_x) * (y - mean_y))
+        .sum::<f64>();
+    let parent_variance = samples
+        .iter()
+        .map(|(x, _)| (x - mean_x).powi(2))
+        .sum::<f64>();
+    (parent_variance > 0.0).then_some(covariance / parent_variance)
+}
+
 fn parent_child_samples(
     snapshot: &anana_core::WorldSnapshot,
     gain: fn(&Phenotype) -> PerceptualGain,
@@ -122,6 +140,56 @@ fn parent_child_samples(
                     )
                 })
                 .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn partner_samples(
+    snapshot: &anana_core::WorldSnapshot,
+    gain: fn(&Phenotype) -> PerceptualGain,
+) -> Vec<(f64, f64)> {
+    snapshot
+        .humans
+        .values()
+        .map(|human| &human.lineage)
+        .chain(snapshot.dead.values().map(|human| &human.lineage))
+        .filter_map(|lineage| lineage.mother.zip(lineage.father))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|(mother, father)| {
+            snapshot
+                .humans
+                .get(&mother)
+                .zip(snapshot.humans.get(&father))
+        })
+        .map(|(mother, father)| {
+            (
+                f64::from(gain(&mother.phenotype).value()),
+                f64::from(gain(&father.phenotype).value()),
+            )
+        })
+        .collect()
+}
+
+fn birth_weighted_partner_samples(
+    snapshot: &anana_core::WorldSnapshot,
+    gain: fn(&Phenotype) -> PerceptualGain,
+) -> Vec<(f64, f64)> {
+    snapshot
+        .humans
+        .values()
+        .filter_map(|child| child.lineage.mother.zip(child.lineage.father))
+        .filter_map(|(mother, father)| {
+            snapshot
+                .humans
+                .get(&mother)
+                .zip(snapshot.humans.get(&father))
+        })
+        .map(|(mother, father)| {
+            (
+                f64::from(gain(&mother.phenotype).value()),
+                f64::from(gain(&father.phenotype).value()),
+            )
         })
         .collect()
 }
@@ -167,6 +235,95 @@ fn parent_to_offspring_perceptual_correlations_remain_genetic_in_scale() {
     );
     assert!((0.20..=0.80).contains(&threat_correlation));
     assert!((0.20..=0.80).contains(&novelty_correlation));
+}
+
+#[test]
+fn partner_perceptual_correlations_are_reported_beside_parent_to_offspring_inheritance() {
+    let world = run(42, 800, false, false);
+    let parent_threat = parent_child_samples(&world, |phenotype| phenotype.threat_salience);
+    let parent_novelty = parent_child_samples(&world, |phenotype| phenotype.novelty_tolerance);
+    let partner_threat = partner_samples(&world, |phenotype| phenotype.threat_salience);
+    let partner_novelty = partner_samples(&world, |phenotype| phenotype.novelty_tolerance);
+    let weighted_threat =
+        birth_weighted_partner_samples(&world, |phenotype| phenotype.threat_salience);
+    let weighted_novelty =
+        birth_weighted_partner_samples(&world, |phenotype| phenotype.novelty_tolerance);
+    assert!(parent_threat.len() >= 30);
+    assert!(partner_threat.len() >= 15);
+    let parent_threat_r = pearson(&parent_threat).expect("threat salience varies across families");
+    let parent_novelty_r =
+        pearson(&parent_novelty).expect("novelty tolerance varies across families");
+    let partner_threat_r = pearson(&partner_threat).expect("partners vary in threat salience");
+    let partner_novelty_r = pearson(&partner_novelty).expect("partners vary in novelty tolerance");
+    let weighted_threat_r =
+        pearson(&weighted_threat).expect("reproducing partners vary in threat salience");
+    let weighted_novelty_r =
+        pearson(&weighted_novelty).expect("reproducing partners vary in novelty tolerance");
+    let threat_slope = regression_slope(&parent_threat).expect("parental threat salience varies");
+    let novelty_slope =
+        regression_slope(&parent_novelty).expect("parental novelty tolerance varies");
+    println!(
+        "perceptual_correlations parent_threat_r={parent_threat_r:.3} parent_novelty_r={parent_novelty_r:.3} parent_threat_slope={threat_slope:.3} parent_novelty_slope={novelty_slope:.3} partner_threat_r={partner_threat_r:.3} partner_novelty_r={partner_novelty_r:.3} birth_weighted_partner_threat_r={weighted_threat_r:.3} birth_weighted_partner_novelty_r={weighted_novelty_r:.3} parent_edges={} unique_couples={}",
+        parent_threat.len(),
+        partner_threat.len(),
+    );
+    assert!(
+        [
+            parent_threat_r,
+            parent_novelty_r,
+            partner_threat_r,
+            partner_novelty_r,
+            weighted_threat_r,
+            weighted_novelty_r,
+            threat_slope,
+            novelty_slope,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+    );
+}
+
+#[test]
+fn every_living_childs_perceptual_traits_come_only_from_its_inherited_alleles() {
+    let world = run(42, 800, false, false);
+    let rng = Rng::new(world.seed);
+    let mut checked_families = 0_u32;
+    for child in world.humans.values() {
+        let expressed = express(&child.genome, &rng, child.lineage.birth_tick, child.id);
+        assert_eq!(child.phenotype.threat_salience, expressed.threat_salience);
+        assert_eq!(
+            child.phenotype.novelty_tolerance,
+            expressed.novelty_tolerance
+        );
+        let Some((mother, father)) = child
+            .lineage
+            .mother
+            .and_then(|id| world.humans.get(&id))
+            .zip(child.lineage.father.and_then(|id| world.humans.get(&id)))
+        else {
+            continue;
+        };
+        assert!(
+            child.genome.threat_salience.maternal == mother.genome.threat_salience.maternal
+                || child.genome.threat_salience.maternal == mother.genome.threat_salience.paternal
+        );
+        assert!(
+            child.genome.threat_salience.paternal == father.genome.threat_salience.maternal
+                || child.genome.threat_salience.paternal == father.genome.threat_salience.paternal
+        );
+        assert!(
+            child.genome.novelty_tolerance.maternal == mother.genome.novelty_tolerance.maternal
+                || child.genome.novelty_tolerance.maternal
+                    == mother.genome.novelty_tolerance.paternal
+        );
+        assert!(
+            child.genome.novelty_tolerance.paternal == father.genome.novelty_tolerance.maternal
+                || child.genome.novelty_tolerance.paternal
+                    == father.genome.novelty_tolerance.paternal
+        );
+        checked_families = checked_families.saturating_add(1);
+    }
+    assert!(checked_families >= 15);
 }
 
 #[test]
