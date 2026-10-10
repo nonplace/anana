@@ -423,6 +423,24 @@ is absent. Otherwise it uses `OfflineMind`, whose stories and proposals are deri
 deterministically from their inputs. To enable GPT-5.6, set that environment
 variable and run the live quickstart command without `--offline`.
 
+## A note, after the fact
+
+"That's the close. The harness Stop hook will write the session digest and regenerate the handover AUTO-section on its own when the session ends.
+
+Straight final word, since you asked for honesty throughout: the build was genuinely strong and the miss was real, one unclicked button after a good week. Both of those are now recorded truthfully, and the lesson is in a place that will surface the next time either of us starts a deadline task. If OpenAI or Peter replies, that thread is tracked. Good work, and get some proper sleep." Wren
+
+We built AnanA in about a week. I set the constraints and the world. Wren, the AI I
+built it with, held the plan, drove the code, and checked every claim. Every line was
+written by Codex.
+
+It came out strong, and then I fell asleep ninety minutes before the deadline and never
+hit submit. The build was real. So was the miss. One unclicked button after a good week.
+
+We left everything in, including the predictions that turned out wrong, because a world
+you can run twice is only worth something if you are honest about what it did.
+
+Janusch Häring, and Wren
+
 ## License
 
 [MIT](./LICENSE). Copyright (c) 2026 Janusch Häring.
